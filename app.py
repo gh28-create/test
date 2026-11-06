@@ -269,7 +269,7 @@ with tab_chat:
                     )
                     bot_reply = chat_completion.choices[0].message.content
             except Exception as e:
-                bot_reply = "Désolé, je rencontre une petite erreur technique. Un agent humain va prendre le relais."
+                bot_reply = f"Erreur technique : {str(e)}"
             
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
         
