@@ -27,14 +27,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# INITIALISATION DB (Bla Cache bch ma ykounch mochkla)
+# INITIALISATION DB
 # ==========================================
 DB_FILE = "aquasense.db"
 
 def get_db():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
-# Nchoufou wach el base mawjouda, ila lel nkhal9ouha w n3ammrouha
 if not os.path.exists(DB_FILE):
     conn = get_db()
     conn.executescript("""
@@ -75,7 +74,6 @@ if not os.path.exists(DB_FILE):
     conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
     conn.commit()
     
-    # --- IA ---
     df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
     df['ts'] = pd.to_datetime(df['ts']); df['hour'] = df['ts'].dt.hour; df['is_night'] = df['hour'].between(2,5).astype(int)
     df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
@@ -103,7 +101,6 @@ if not os.path.exists(DB_FILE):
     conn.commit()
     conn.close()
 
-# N7ellou connexion jdida m3a kol clik (bch ma ykounch mochkla m3a el refresh)
 conn = get_db()
 
 # ==========================================
@@ -121,7 +118,8 @@ if not st.session_state.email:
         with st.form("login"):
             e = st.text_input("📧 Email", "admin@aquasense.tn")
             p = st.text_input("🔒 Mot de passe", "admin123", type="password")
-            if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
+            # Modifié hna: baddalna use_container_width b width='stretch'
+            if st.form_submit_button("Se connecter", width='stretch', type="primary"):
                 row = pd.read_sql("SELECT * FROM users WHERE email=? AND pwd=?", conn, params=(e, p))
                 if not row.empty:
                     st.session_state.update(email=row.iloc[0]['email'], role=row.iloc[0]['role'], nom=row.iloc[0]['nom'], cid=row.iloc[0]['client_id'])
@@ -138,7 +136,8 @@ with st.sidebar:
     st.markdown(f"**Utilisateur :** {st.session_state.nom}")
     st.markdown(f"**Rôle :** {st.session_state.role.capitalize()}")
     st.markdown("---")
-    if st.button("🚪 Déconnexion", use_container_width=True):
+    # Modifié hna: baddalna use_container_width b width='stretch'
+    if st.button("🚪 Déconnexion", width='stretch'):
         for k in ("email","role","nom","cid"): st.session_state[k]=None
         st.rerun()
 
@@ -171,7 +170,8 @@ with tab_dash:
             except: pass
             return 'background-color: #ffffcc;'
         
-        st.dataframe(al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)']), use_container_width=True, hide_index=True)
+        # Modifié hna: baddalna use_container_width b width='stretch'
+        st.dataframe(al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)']), width='stretch', hide_index=True)
         st.markdown(f'<div class="custom-warning">⚠️ Action Requise : Réparer ces fuites vous permettrait d\'économiser environ {al["Coût (DT/mois)"].sum()*12:,.0f} DT par an.</div>', unsafe_allow_html=True)
     else:
         st.success("✅ Aucune fuite détectée.")
@@ -183,12 +183,14 @@ with tab_dash:
         prof = co.groupby('hour')['vol'].mean().reset_index()
         fig1 = px.line(prof, x='hour', y='vol', markers=True, labels={'vol':'Débit Moyen (m³/h)','hour':'Heure'})
         fig1.update_traces(line_color='#0077b6', line_width=3)
-        st.plotly_chart(fig1, use_container_width=True)
+        # Modifié hna: baddalna use_container_width b width='stretch'
+        st.plotly_chart(fig1, width='stretch')
     with col_g2:
         if not al.empty:
             by_zone = al.groupby('Zone')['Coût (DT/mois)'].sum().reset_index()
             fig2 = px.pie(by_zone, names='Zone', values='Coût (DT/mois)', hole=0.5, color_discrete_sequence=px.colors.sequential.Reds_r)
-            st.plotly_chart(fig2, use_container_width=True)
+            # Modifié hna: baddalna use_container_width b width='stretch'
+            st.plotly_chart(fig2, width='stretch')
 
 # ------------------------------------------
 # TAB 2 : CHAT & SUPPORT
@@ -205,21 +207,20 @@ with tab_chat:
         chat_cid = st.session_state.cid
         st.info("Posez vos questions techniques ou demandez de l'aide.")
 
-    # Affichage des messages
     msgs = pd.read_sql(f"SELECT sender, role, text, ts FROM messages WHERE client_id={chat_cid} ORDER BY ts", conn)
     for _, m in msgs.iterrows():
         with st.chat_message("user" if m['role'] == st.session_state.role else "assistant"):
             st.write(f"**{m['sender']}** ({m['ts'][11:16]})")
             st.write(m['text'])
 
-    # BOUTONS RAPIDES (Le point fort lel demo)
     if st.session_state.role == "client":
         st.markdown("**💡 Questions fréquentes (Cliquez pour envoyer) :**")
         col_b1, col_b2, col_b3 = st.columns(3)
         
-        btn_fuite = col_b1.button("🔧 Réparer une fuite", use_container_width=True)
-        btn_prix = col_b2.button("💰 Prix de l'abonnement", use_container_width=True)
-        btn_urgence = col_b3.button("🚨 Intervention urgente", use_container_width=True)
+        # Modifié hna: baddalna use_container_width b width='stretch'
+        btn_fuite = col_b1.button("🔧 Réparer une fuite", width='stretch')
+        btn_prix = col_b2.button("💰 Prix de l'abonnement", width='stretch')
+        btn_urgence = col_b3.button("🚨 Intervention urgente", width='stretch')
         
         prompt_btn = None
         if btn_fuite: prompt_btn = "Comment faire pour réparer une fuite ?"
@@ -242,10 +243,10 @@ with tab_chat:
             conn.commit()
             st.rerun()
 
-    # Zone de texte manuelle
     with st.form(key="chat_form", clear_on_submit=True):
         prompt = st.text_input("Tapez votre message ici :")
-        submit_button = st.form_submit_button("Envoyer 🚀")
+        # Modifié hna: baddalna use_container_width b width='stretch'
+        submit_button = st.form_submit_button("Envoyer 🚀", width='stretch')
 
         if submit_button and prompt:
             ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
