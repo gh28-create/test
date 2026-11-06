@@ -1,9 +1,10 @@
 import streamlit as st
-import pandas as pd, numpy as np, sqlite3, random, os
+import pandas as pd, numpy as np, sqlite3, random, os, io
 from sklearn.ensemble import IsolationForest
 from datetime import datetime, timedelta
 import plotly.express as px
 from groq import Groq
+from fpdf import FPDF
 
 # ==========================================
 # CONFIGURATION & STYLE PREMIUM
@@ -34,6 +35,64 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
+# FONCTION POUR GÉNÉRER LE PDF
+# ==========================================
+def create_pdf(dataframe, client_name):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Header
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_text_color(0, 119, 182)
+    pdf.cell(0, 10, "AquaSense Pro - Rapport d'Audit", ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "I", 12)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 10, f"Client : {client_name} | Date : {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(10)
+    
+    # Table Header
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(0, 119, 182)
+    pdf.set_text_color(255, 255, 255)
+    
+    col_widths = [25, 35, 30, 30, 50]
+    headers = ["Date", "Zone", "Débit (m3/h)", "Coût (DT)", "Statut"]
+    
+    for i, header in enumerate(headers):
+        pdf.cell(col_widths[i], 10, header, border=1, fill=True, align="C")
+    pdf.ln()
+    
+    # Table Body
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(0, 0, 0)
+    fill = False
+    
+    for _, row in dataframe.iterrows():
+        date_str = row['Date'].strftime('%Y-%m-%d') if pd.notna(row['Date']) else ''
+        zone = str(row['Zone'])
+        debit = f"{row['Débit m³/h']:.2f}"
+        cout = f"{row['Coût (DT/mois)']:.0f}"
+        statut = str(row['Statut'])
+        
+        pdf.set_fill_color(240, 247, 255) if fill else pdf.set_fill_color(255, 255, 255)
+        
+        pdf.cell(col_widths[0], 8, date_str, border=1, fill=fill, align="C")
+        pdf.cell(col_widths[1], 8, zone, border=1, fill=fill, align="C")
+        pdf.cell(col_widths[2], 8, debit, border=1, fill=fill, align="C")
+        pdf.cell(col_widths[3], 8, cout, border=1, fill=fill, align="C")
+        pdf.cell(col_widths[4], 8, statut, border=1, fill=fill, align="C")
+        pdf.ln()
+        fill = not fill
+        
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "B", 12)
+    total = dataframe[dataframe['Statut'] != 'Résolue']['Coût (DT/mois)'].sum()
+    pdf.cell(0, 10, f"Total des pertes actives : {total:,.0f} DT / mois", ln=True, align="R")
+    
+    return bytes(pdf.output())
+
+# ==========================================
 # INITIALISATION DB & IA (IN-MEMORY)
 # ==========================================
 @st.cache_resource(show_spinner="Initialisation de la base de données...")
@@ -44,7 +103,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS compteurs(id INTEGER PRIMARY KEY, client_id INT, zone TEXT);
     CREATE TABLE IF NOT EXISTS releves(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, vol REAL);
     CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT, pwd TEXT, role TEXT, client_id INT, nom TEXT);
-    CREATE TABLE IF NOT EXISTS alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'Nouvelle');
+    CREATE TABLE IF NOT EXISTS alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'Nouvelle', maintenance_note TEXT DEFAULT '');
     """)
     
     conn.executemany("INSERT INTO clients VALUES(?,?,?,?,?)", [
@@ -186,11 +245,11 @@ st.markdown("""
 
 st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow_html=True)
 
-# 3 ONGLETS : DASHBOARD, ROI, CHAT
+# 3 ONGLETS
 tab_dash, tab_roi, tab_chat = st.tabs(["📊 Tableau de Bord", "💰 Impact & ROI", "💬 Support & Chat"])
 
 # ------------------------------------------
-# TAB 1 : DASHBOARD (Kima 9bal)
+# TAB 1 : DASHBOARD (M3a PDF & MAINTENANCE)
 # ------------------------------------------
 with tab_dash:
     where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
@@ -206,20 +265,23 @@ with tab_dash:
     st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown("### 🚨 Alertes & Actions")
-    al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)', a.statut AS Statut FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
+    # Zidna el colonne mte3 el maintenance fi el query
+    al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)', a.statut AS Statut, a.maintenance_note AS 'Note Maintenance' FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
         al['Date'] = pd.to_datetime(al['Date'])
         
-        # BOUTON EXPORT (MOUHIM BARCHA)
-        csv = al.drop(columns=['id']).to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Télécharger le rapport (CSV)",
-            data=csv,
-            file_name='rapport_fuites_aquasense.csv',
-            mime='text/csv',
-            type="secondary"
-        )
+        # BOUTON PDF
+        col_pdf, col_csv = st.columns([1, 4])
+        with col_pdf:
+            pdf_bytes = create_pdf(al, st.session_state.nom)
+            st.download_button(
+                label="📄 Télécharger le rapport (PDF)",
+                data=pdf_bytes,
+                file_name='rapport_aquasense.pdf',
+                mime='application/pdf',
+                type="primary"
+            )
 
         edited_al = st.data_editor(
             al,
@@ -229,7 +291,8 @@ with tab_dash:
                 "Score": st.column_config.NumberColumn("Confiance IA", format="%.3f"),
                 "Débit m³/h": st.column_config.NumberColumn("Débit", format="%.2f"),
                 "Coût (DT/mois)": st.column_config.NumberColumn("Coût", format="%.0f DT"),
-                "Statut": st.column_config.SelectboxColumn("État", options=["Nouvelle", "En cours", "Résolue"], required=True)
+                "Statut": st.column_config.SelectboxColumn("État", options=["Nouvelle", "En cours", "Résolue"], required=True),
+                "Note Maintenance": st.column_config.TextColumn("Note Maintenance", disabled=True) # Ma nbadalouhech men hna
             },
             hide_index=True, width='stretch', key="alerts_editor"
         )
@@ -247,54 +310,92 @@ with tab_dash:
             conn.commit()
             st.rerun()
 
+        # --- TICKET DE MAINTENANCE (SECTION JDIDA) ---
+        st.markdown("---")
+        st.markdown("### 🛠️ Assigner un Ticket de Maintenance")
+        st.info("Sélectionnez une fuite active pour assigner un technicien et ajouter une note.")
+        
+        al_actives = al[al['Statut'] != 'Résolue']
+        if not al_actives.empty:
+            # N7adhrrou les options (Zone + Date)
+            al_actives['Option'] = al_actives['Zone'] + " (Détecté le " + al_actives['Date'].dt.strftime('%d/%m/%Y') + ")"
+            
+            with st.form("maintenance_form"):
+                selected_fuite = st.selectbox("Choisir la fuite :", al_actives['Option'].tolist())
+                technicien = st.text_input("Nom du technicien / Plombier :")
+                note = st.text_area("Détails de l'intervention :")
+                
+                if st.form_submit_button("Créer le Ticket & Passer en 'En cours'", type="primary"):
+                    if technicien and note:
+                        # Nl9aw el ID mte3 el fuite elli ekhtarha
+                        fuite_id = al_actives[al_actives['Option'] == selected_fuite]['id'].values[0]
+                        full_note = f"[{technicien}] : {note}"
+                        conn.execute("UPDATE alertes SET statut = 'En cours', maintenance_note = ? WHERE id = ?", (full_note, fuite_id))
+                        conn.commit()
+                        st.success("✅ Ticket créé avec succès ! Le statut a été mis à jour.")
+                        st.rerun()
+                    else:
+                        st.error("Veuillez remplir le nom du technicien et les détails.")
+        else:
+            st.success("✅ Toutes les fuites ont été résolues. Aucun ticket à créer.")
+
         st.markdown(f'<div class="custom-warning">⚠️ <b>Action Requise :</b> Ces fuites vous coûtent de l\'argent. Passez le statut à "Résolue" une fois réparées.</div>', unsafe_allow_html=True)
     else:
         st.success("✅ Aucune fuite active. Votre installation est optimale.")
 
 # ------------------------------------------
-# TAB 2 : IMPACT & ROI (EL JDID)
+# TAB 2 : IMPACT & ROI (Kima 9bal)
 # ------------------------------------------
 with tab_roi:
     st.markdown("### 📈 Simulateur d'Impact Environnemental & Financier")
-    st.info("Utilisez ce simulateur pour présenter les bénéfices de la réparation à votre direction ou à vos investisseurs.")
+    st.info("Utilisez ce simulateur pour présenter les bénéfices de la réparation à votre direction.")
     
-    # Njibou les données el 9dim bch n7esbou
     al_active = pd.read_sql(f"SELECT ROUND(a.cout,0) AS cout, ROUND(a.fuite,2) AS fuite FROM alertes a JOIN compteurs c ON c.id=a.cid {where_kpi}", conn)
     
     if not al_active.empty:
         total_cout_mois = al_active['cout'].sum()
-        total_eau_mois = al_active['fuite'].sum() * 24 * 30 * 1000 # B' Litres
+        total_eau_mois = al_active['fuite'].sum() * 24 * 30 * 1000 
         
         col_r1, col_r2 = st.columns([1, 1])
         
         with col_r1:
             st.markdown("#### 🎯 Simulateur de Réparation")
-            st.markdown("Faites glisser le curseur pour voir l'impact d'une réparation partielle ou totale :")
-            
-            # Slider interactif (0% l 100%)
             pct_fix = st.slider("Pourcentage de fuites réparées", 0, 100, 50, step=10)
             
-            # Calculs
             eau_sauvee = total_eau_mois * (pct_fix / 100)
             argent_sauve = total_cout_mois * (pct_fix / 100)
             
-            # Conversions bch tji mfehmouma
-            bouteilles = eau_sauvee / 1.5 # Bouteilles mte3 1.5L
-            piscines = eau_sauvee / 2500000 # Piscines Olympiques (2.5M Litres)
-            
             st.metric("💧 Eau Sauvée / mois", f"{eau_sauvee:,.0f} Litres")
             st.metric("💰 Argent Sauvé / mois", f"{argent_sauve:,.0f} DT")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            rapport_data = pd.DataFrame({
+                "Indicateur": ["Pourcentage de fuites réparées", "Eau sauvée par mois (Litres)", "Argent sauvé par mois (DT)", "Economies sur 1 an (DT)"],
+                "Valeur": [f"{pct_fix}%", f"{eau_sauvee:,.0f} L", f"{argent_sauve:,.0f} DT", f"{argent_sauve*12:,.0f} DT"]
+            })
+            csv_roi = rapport_data.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="📥 Télécharger ce rapport de simulation (CSV)",
+                data=csv_roi,
+                file_name='rapport_roi_aquasense.csv',
+                mime='text/csv',
+                type="primary",
+                width='stretch'
+            )
             
         with col_r2:
             st.markdown("#### 🌍 Impact Environnemental")
             st.markdown(f"En réparant **{pct_fix}%** des fuites, votre entreprise économise :")
             
+            bouteilles = eau_sauvee / 1.5 
+            piscines = eau_sauvee / 2500000 
+            
             st.success(f"💧 **{bouteilles:,.0f}** bouteilles d'eau de 1.5L")
             st.success(f"🏊 **{piscines:.1f}** piscines olympiques d'eau")
             st.success(f"🌳 L'équivalent de la consommation annuelle de **{eau_sauvee/365/150:.0f}** personnes")
             
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.caption("Ces chiffres peuvent être intégrés dans votre rapport RSE (Responsabilité Sociétale des Entreprises).")
+            st.caption("Ces chiffres peuvent être intégrés dans votre rapport RSE.")
     else:
         st.success("✅ Vous n'avez aucune fuite active. Impact maximal !")
 
@@ -351,7 +452,7 @@ with tab_chat:
                     bot_reply = "Erreur technique : Veuillez configurer votre clé API Groq."
                 else:
                     client_ai = Groq(api_key=api_key)
-                    system_prompt = f"Tu es le 'Bot AquaSense'. Tu parles à : {st.session_state.nom}. Données ACTIVES :\n{data_context}\nRéponds de manière professionnelle et précise."
+                    system_prompt = f"Tu es le 'Bot AquaSense'. Tu parles à : {st.session_state.nom}. Données ACTIVES :\n{data_context}\nRéponds de manière professionnelle."
                     chat_completion = client_ai.chat.completions.create(
                         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                         model="openai/gpt-oss-120b",
