@@ -51,7 +51,7 @@ def init_db():
         (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
         (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
     
-    # Génération données
+    # Génération données IA
     random.seed(42); np.random.seed(42)
     start = datetime.utcnow() - timedelta(days=90)
     rows = []
@@ -93,8 +93,12 @@ def init_db():
             alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     
-    # Messages initiaux
-    conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (1, 'Hôtel Les Palmiers', 'client', 'Bonjour, j\\'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?', ?)", (datetime.utcnow().strftime('%Y-%m-%d %H:%M'),))
+    # Message initial corrigé (utilisation de paramètres ? au lieu de texte brut)
+    msg_text = "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?"
+    ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+    conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
+                 (1, 'Hôtel Les Palmiers', 'client', msg_text, ts_now))
+    
     conn.commit()
     return conn
 
@@ -116,7 +120,7 @@ if not st.session_state.email:
             e = st.text_input("📧 Email", "admin@aquasense.tn")
             p = st.text_input("🔒 Mot de passe", "admin123", type="password")
             if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
-                row = pd.read_sql(f"SELECT * FROM users WHERE email='{e}' AND pwd='{p}'", conn)
+                row = pd.read_sql("SELECT * FROM users WHERE email=? AND pwd=?", conn, params=(e, p))
                 if not row.empty:
                     st.session_state.update(email=row.iloc[0]['email'], role=row.iloc[0]['role'], nom=row.iloc[0]['nom'], cid=row.iloc[0]['client_id'])
                     st.rerun()
@@ -146,7 +150,6 @@ tab_dash, tab_chat = st.tabs(["📊 Tableau de Bord", "💬 Support & Chat"])
 # TAB 1 : DASHBOARD
 # ------------------------------------------
 with tab_dash:
-    # --- KPIs ---
     k = pd.read_sql(f"SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f, COUNT(DISTINCT a.cid) nc FROM alertes a JOIN compteurs c ON c.id=a.cid {where}", conn).iloc[0]
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("🚨 Fuites Détectées", int(k['n']))
@@ -155,7 +158,6 @@ with tab_dash:
     col4.metric("💰 Économies Potentielles", f"{k['c']*12:,.0f} DT")
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- ALERTES ---
     st.markdown("### 🚨 Alertes de Fuites (Analysées par l'IA)")
     al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)' FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
@@ -173,7 +175,6 @@ with tab_dash:
     else:
         st.success("✅ Aucune fuite détectée.")
 
-    # --- GRAPHIQUES ---
     co = pd.read_sql(f"SELECT r.ts, r.vol, c.zone FROM releves r JOIN compteurs c ON c.id=r.cid {where}", conn)
     co['ts'] = pd.to_datetime(co['ts']); co['hour'] = co['ts'].dt.hour
     col_g1, col_g2 = st.columns(2)
@@ -213,7 +214,8 @@ with tab_chat:
     # Zone d'envoi
     if prompt := st.chat_input("Tapez votre message ici..."):
         ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-        # Enregistrer le message
+        
+        # Enregistrer le message avec paramètres (Anti-bug)
         conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
                      (chat_cid, st.session_state.nom, st.session_state.role, prompt, ts_now))
         conn.commit()
