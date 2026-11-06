@@ -51,7 +51,6 @@ def init_db():
         (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
         (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
     
-    # Données simulées initiales
     random.seed(42); np.random.seed(42)
     start = datetime.utcnow() - timedelta(days=90)
     rows = []
@@ -71,13 +70,11 @@ def init_db():
     conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
     conn.commit()
     
-    # Lancement de l'IA
     generate_alerts(conn)
     return conn
 
 def generate_alerts(conn):
-    """Fonction séparée pour lancer l'IA (utilisée à l'init et lors de l'upload)"""
-    conn.execute("DELETE FROM alertes") # Nems7ou el 9dom
+    conn.execute("DELETE FROM alertes")
     df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
     if df.empty: return
     
@@ -142,7 +139,6 @@ with st.sidebar:
     st.markdown(f"**Utilisateur :** {st.session_state.nom}")
     st.markdown(f"**Rôle :** {st.session_state.role.capitalize()}")
     
-    # --- UPLOAD EXCEL (GHIR LEL ADMIN) ---
     if st.session_state.role == "admin":
         st.markdown("---")
         st.markdown("### 📤 Importer des données")
@@ -158,11 +154,11 @@ with st.sidebar:
                     if not {'cid', 'ts', 'vol'}.issubset(df_new.columns):
                         st.error("Erreur : Le fichier doit contenir les colonnes 'cid', 'ts' et 'vol'.")
                     else:
-                        conn.execute("DELETE FROM releves") # Nems7ou el 9dom
+                        conn.execute("DELETE FROM releves")
                         conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", 
                                          df_new[['cid', 'ts', 'vol']].values.tolist())
                         conn.commit()
-                        generate_alerts(conn) # N3awdou nkhadmou el IA
+                        generate_alerts(conn)
                         st.success("✅ Données importées et IA relancée !")
                         st.rerun()
                 except Exception as e:
@@ -182,7 +178,6 @@ tab_dash, tab_chat = st.tabs(["📊 Tableau de Bord", "💬 Support & Chat"])
 # TAB 1 : DASHBOARD
 # ------------------------------------------
 with tab_dash:
-    # Filtre bch ma n7esbouch el fuites elli tsal7et
     where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
     
     k = pd.read_sql(f"SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f, COUNT(DISTINCT a.cid) nc FROM alertes a JOIN compteurs c ON c.id=a.cid {where_kpi}", conn).iloc[0]
@@ -195,15 +190,18 @@ with tab_dash:
 
     st.markdown("### 🚨 Alertes de Fuites (Modifiez le statut !)")
     
-    # Hna beddelna l'query bch njibou el statut
+    # Jbna el données
     al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)', a.statut AS Statut FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
-        # Baddalna st.dataframe b st.data_editor
+        # Nsel7ou el Date bch Streamlit yefhemha (Mouhim barcha)
+        al['Date'] = pd.to_datetime(al['Date'])
+        
+        # Data Editor mte3 Streamlit
         edited_al = st.data_editor(
             al,
             column_config={
-                "id": None, # Nkhabbiw el ID
+                "id": None, 
                 "Date": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, HH:mm"),
                 "Score": st.column_config.NumberColumn("Score IA", format="%.3f"),
                 "Débit m³/h": st.column_config.NumberColumn("Débit m³/h", format="%.2f"),
@@ -220,13 +218,16 @@ with tab_dash:
             key="alerts_editor"
         )
         
-        # Nchoufou wach el client baddel el statut
-        if not edited_al.equals(al):
-            for idx, row in edited_al.iterrows():
-                if row['Statut'] != al.loc[idx, 'Statut']:
-                    conn.execute("UPDATE alertes SET statut = ? WHERE id = ?", (row['Statut'], row['id']))
+        # Nchoufou wach el client baddel ay statut (b' tari9a s7i7a)
+        changed = False
+        for i in range(len(al)):
+            if al.loc[i, 'Statut'] != edited_al.loc[i, 'Statut']:
+                conn.execute("UPDATE alertes SET statut = ? WHERE id = ?", (edited_al.loc[i, 'Statut'], al.loc[i, 'id']))
+                changed = True
+        
+        if changed:
             conn.commit()
-            st.rerun() # N3awdou ncharejiw bch les KPIs ytall3ou
+            st.rerun() # N3awdou refresh bch les KPIs ytall3ou
 
         st.markdown(f'<div class="custom-warning">⚠️ Action Requise : Les fuites "Nouvelles" et "En cours" vous coûtent de l\'argent. Réparer et passer le statut à "Résolue" fera baisser vos pertes.</div>', unsafe_allow_html=True)
     else:
@@ -249,7 +250,7 @@ with tab_dash:
             st.plotly_chart(fig2, width='stretch')
 
 # ------------------------------------------
-# TAB 2 : CHAT & SUPPORT (Version GROQ AI)
+# TAB 2 : CHAT & SUPPORT
 # ------------------------------------------
 with tab_chat:
     st.markdown("### 💬 Messagerie avec le Support AquaSense")
@@ -295,13 +296,11 @@ with tab_chat:
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
             st.rerun()
 
-    # --------- L'INTELLIGENCE ARTIFICIELLE GROQ ---------
     if prompt := st.chat_input("Tapez votre message ici..."):
         ts_now = datetime.now().strftime('%H:%M')
         st.session_state.chat_history[chat_cid].append({"role": st.session_state.role, "sender": st.session_state.nom, "text": prompt, "ts": ts_now})
         
         if st.session_state.role == "client":
-            # Njibou ken el fuites elli mch "Résolue"
             query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} AND a.statut != 'Résolue' ORDER BY a.cout DESC LIMIT 3", conn)
             
             if not query_top.empty:
