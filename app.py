@@ -38,14 +38,11 @@ st.markdown("""
 # FONCTIONS POUR GÉNÉRER LES PDF
 # ==========================================
 def create_pdf(dataframe, client_name):
-    """PDF mte3 el tableau mte3 les alertes (Tab 1)"""
     pdf = FPDF()
     pdf.add_page()
-    
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(0, 119, 182)
     pdf.cell(0, 10, "AquaSense Pro - Rapport d'Audit", ln=True, align="C")
-    
     pdf.set_font("Helvetica", "I", 12)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 10, f"Client : {client_name} | Date : {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
@@ -54,7 +51,6 @@ def create_pdf(dataframe, client_name):
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(0, 119, 182)
     pdf.set_text_color(255, 255, 255)
-    
     col_widths = [25, 35, 30, 30, 50]
     headers = ["Date", "Zone", "Débit (m3/h)", "Coût (DT)", "Statut"]
     
@@ -65,21 +61,14 @@ def create_pdf(dataframe, client_name):
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(0, 0, 0)
     fill = False
-    
     for _, row in dataframe.iterrows():
         date_str = row['Date'].strftime('%Y-%m-%d') if pd.notna(row['Date']) else ''
-        zone = str(row['Zone'])
-        debit = f"{row['Débit m³/h']:.2f}"
-        cout = f"{row['Coût (DT/mois)']:.0f}"
-        statut = str(row['Statut'])
-        
         pdf.set_fill_color(240, 247, 255) if fill else pdf.set_fill_color(255, 255, 255)
-        
         pdf.cell(col_widths[0], 8, date_str, border=1, fill=fill, align="C")
-        pdf.cell(col_widths[1], 8, zone, border=1, fill=fill, align="C")
-        pdf.cell(col_widths[2], 8, debit, border=1, fill=fill, align="C")
-        pdf.cell(col_widths[3], 8, cout, border=1, fill=fill, align="C")
-        pdf.cell(col_widths[4], 8, statut, border=1, fill=fill, align="C")
+        pdf.cell(col_widths[1], 8, str(row['Zone']), border=1, fill=fill, align="C")
+        pdf.cell(col_widths[2], 8, f"{row['Débit m³/h']:.2f}", border=1, fill=fill, align="C")
+        pdf.cell(col_widths[3], 8, f"{row['Coût (DT/mois)']:.0f}", border=1, fill=fill, align="C")
+        pdf.cell(col_widths[4], 8, str(row['Statut']), border=1, fill=fill, align="C")
         pdf.ln()
         fill = not fill
         
@@ -87,41 +76,33 @@ def create_pdf(dataframe, client_name):
     pdf.set_font("Helvetica", "B", 12)
     total = dataframe[dataframe['Statut'] != 'Résolue']['Coût (DT/mois)'].sum()
     pdf.cell(0, 10, f"Total des pertes actives : {total:,.0f} DT / mois", ln=True, align="R")
-    
     return bytes(pdf.output())
 
 def create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, personnes, client_name):
-    """PDF mte3 el simulation (Tab 2)"""
     pdf = FPDF()
     pdf.add_page()
-    
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(0, 119, 182)
     pdf.cell(0, 10, "AquaSense Pro - Rapport de Simulation ROI", ln=True, align="C")
-    
     pdf.set_font("Helvetica", "I", 12)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 10, f"Client : {client_name} | Date : {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
     pdf.ln(10)
-    
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 10, f"Scenario de reparation : {pct_fix}% des fuites", ln=True)
     pdf.ln(5)
-    
     pdf.set_font("Helvetica", "", 12)
     pdf.cell(0, 10, f"- Eau sauvee par mois : {eau_sauvee:,.0f} Litres", ln=True)
     pdf.cell(0, 10, f"- Argent sauve par mois : {argent_sauve:,.0f} DT", ln=True)
     pdf.cell(0, 10, f"- Economies sur 1 an : {argent_sauve*12:,.0f} DT", ln=True)
     pdf.ln(5)
-    
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, "Impact Environnemental :", ln=True)
     pdf.set_font("Helvetica", "", 12)
     pdf.cell(0, 10, f"- {bouteilles:,.0f} bouteilles d'eau de 1.5L", ln=True)
     pdf.cell(0, 10, f"- {piscines:.1f} piscines olympiques", ln=True)
     pdf.cell(0, 10, f"- Consommation annuelle de {personnes:.0f} personnes", ln=True)
-    
     return bytes(pdf.output())
 
 # ==========================================
@@ -221,7 +202,7 @@ if not st.session_state.email:
             with st.form("login"):
                 e = st.text_input("📧 Email", "admin@aquasense.tn")
                 p = st.text_input("🔒 Mot de passe", "admin123", type="password")
-                if st.form_submit_button("Accéder au tableau de bord", width='stretch', type="primary"):
+                if st.form_submit_button("Accéder au tableau de bord", use_container_width=True, type="primary"):
                     row = pd.read_sql("SELECT * FROM users WHERE email=? AND pwd=?", conn, params=(e, p))
                     if not row.empty:
                         st.session_state.update(email=row.iloc[0]['email'], role=row.iloc[0]['role'], nom=row.iloc[0]['nom'], cid=row.iloc[0]['client_id'])
@@ -242,7 +223,7 @@ with st.sidebar:
         st.markdown("### 📤 Importer données")
         uploaded_file = st.file_uploader("Excel / CSV", type=["csv", "xlsx"])
         if uploaded_file is not None:
-            if st.button("Remplacer & Relancer l'IA", width='stretch'):
+            if st.button("Remplacer & Relancer l'IA", use_container_width=True):
                 try:
                     df_new = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                     if not {'cid', 'ts', 'vol'}.issubset(df_new.columns):
@@ -257,7 +238,7 @@ with st.sidebar:
                 except Exception as e: st.error(f"Erreur : {e}")
         st.markdown("---")
 
-    if st.button("🚪 Déconnexion", width='stretch'):
+    if st.button("🚪 Déconnexion", use_container_width=True):
         for k in ("email","role","nom","cid"): st.session_state[k]=None
         st.rerun()
 
@@ -299,9 +280,15 @@ with tab_dash:
     al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)', a.statut AS Statut, a.maintenance_note AS 'Note Maintenance' FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
+        # --- EL FIX EL 7A9I9I HNA ---
         al['Date'] = pd.to_datetime(al['Date'])
-        al['Note Maintenance'] = al['Note Maintenance'].fillna('') 
-        al['Statut'] = al['Statut'].fillna('Nouvelle')
+        al['Note Maintenance'] = al['Note Maintenance'].fillna('').astype(str)
+        al['Statut'] = al['Statut'].fillna('Nouvelle').astype(str).replace('None', 'Nouvelle')
+        al['Zone'] = al['Zone'].fillna('Inconnu').astype(str)
+        al['Client'] = al['Client'].fillna('Inconnu').astype(str)
+        al['Score'] = al['Score'].fillna(0).astype(float)
+        al['Débit m³/h'] = al['Débit m³/h'].fillna(0).astype(float)
+        al['Coût (DT/mois)'] = al['Coût (DT/mois)'].fillna(0).astype(float)
         al = al.reset_index(drop=True)
         
         col_pdf, col_csv = st.columns([1, 4])
@@ -315,6 +302,7 @@ with tab_dash:
                 type="primary"
             )
 
+        # Rja3na l use_container_width=True 7it ashal m3a Cloud
         edited_al = st.data_editor(
             al,
             column_config={
@@ -326,7 +314,7 @@ with tab_dash:
                 "Statut": st.column_config.SelectboxColumn("État", options=["Nouvelle", "En cours", "Résolue"], required=True),
                 "Note Maintenance": st.column_config.TextColumn("Note Maintenance", disabled=True) 
             },
-            hide_index=True, width='stretch'
+            hide_index=True, use_container_width=True
         )
         
         changed = False
@@ -403,7 +391,6 @@ with tab_roi:
             piscines = eau_sauvee / 2500000 
             personnes = eau_sauvee/365/150
             
-            # BOUTON PDF JDID (Badalna el CSV b' PDF)
             pdf_roi_bytes = create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, personnes, st.session_state.nom)
             st.download_button(
                 label="📄 Télécharger ce rapport de simulation (PDF)",
@@ -411,7 +398,7 @@ with tab_roi:
                 file_name='rapport_roi_aquasense.pdf',
                 mime='application/pdf',
                 type="primary",
-                width='stretch'
+                use_container_width=True
             )
             
         with col_r2:
@@ -450,9 +437,9 @@ with tab_chat:
         st.markdown("**💡 Actions rapides :**")
         col_b1, col_b2, col_b3 = st.columns(3)
         prompt_btn = None
-        if col_b1.button("🔧 Réparer une fuite", width='stretch'): prompt_btn = "Comment faire pour réparer une fuite ?"
-        elif col_b2.button("💰 Tarifs", width='stretch'): prompt_btn = "Quel est le prix de l'abonnement ?"
-        elif col_b3.button("🚨 Urgence", width='stretch'): prompt_btn = "J'ai besoin d'une intervention urgente."
+        if col_b1.button("🔧 Réparer une fuite", use_container_width=True): prompt_btn = "Comment faire pour réparer une fuite ?"
+        elif col_b2.button("💰 Tarifs", use_container_width=True): prompt_btn = "Quel est le prix de l'abonnement ?"
+        elif col_b3.button("🚨 Urgence", use_container_width=True): prompt_btn = "J'ai besoin d'une intervention urgente."
         
         if prompt_btn:
             ts_now = datetime.now().strftime('%H:%M')
