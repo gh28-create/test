@@ -99,10 +99,10 @@ def create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, pers
     return bytes(pdf.output())
 
 # ==========================================
-# INITIALISATION DB & IA (IN-MEMORY)
+# INITIALISATION DB & IA (IN-MEMORY) - Baddalna el esm bch nna7iw el cache
 # ==========================================
 @st.cache_resource(show_spinner="Initialisation de la base de données...")
-def init_db_v6():
+def init_db_v4():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY, nom TEXT, secteur TEXT, ville TEXT, tarif REAL);
@@ -170,7 +170,7 @@ def generate_alerts(conn):
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     conn.commit()
 
-conn = init_db_v6()
+conn = init_db_v4()
 
 # ==========================================
 # INITIALISATION CHAT
@@ -254,8 +254,8 @@ st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow
 tab_dash, tab_roi, tab_chat = st.tabs(["📊 Tableau de Bord", "💰 Impact & ROI", "💬 Support & Chat"])
 
 # ------------------------------------------
-# TAB 1 : DASHBOARD (M3a PDF & MAINTENANCE)
-# ==========================================
+# TAB 1 : DASHBOARD (FIX 100% : Na7ina data_editor)
+# ------------------------------------------
 with tab_dash:
     where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
     k = pd.read_sql(f"SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f FROM alertes a JOIN compteurs c ON c.id=a.cid {where_kpi}", conn).iloc[0]
@@ -271,22 +271,20 @@ with tab_dash:
 
     st.markdown("### 🚨 Alertes & Actions")
     
-    # Jbna el données
     al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS Debit, ROUND(a.cout,0) AS Cout, a.statut AS Statut, a.maintenance_note AS Note FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
-        # --- EL FIX EL 7A9I9I : N-NADDOU EL DATA BCH MA YKOUNCH AY "NONE" ---
         al['Date'] = pd.to_datetime(al['Date'])
         al['Client'] = al['Client'].astype(str)
         al['Zone'] = al['Zone'].astype(str)
-        al['Score'] = pd.to_numeric(al['Score'], errors='coerce').fillna(0).astype(float)
-        al['Debit'] = pd.to_numeric(al['Debit'], errors='coerce').fillna(0).astype(float)
-        al['Cout'] = pd.to_numeric(al['Cout'], errors='coerce').fillna(0).astype(float)
-        al['Statut'] = al['Statut'].fillna('Nouvelle').astype(str).replace('None', 'Nouvelle')
-        al['Note'] = al['Note'].fillna('').astype(str).replace('None', '')
+        al['Score'] = pd.to_numeric(al['Score'], errors='coerce').fillna(0)
+        al['Debit'] = pd.to_numeric(al['Debit'], errors='coerce').fillna(0)
+        al['Cout'] = pd.to_numeric(al['Cout'], errors='coerce').fillna(0)
+        al['Statut'] = al['Statut'].astype(str).replace('None', 'Nouvelle')
+        al['Note'] = al['Note'].astype(str).replace('None', '')
         al = al.reset_index(drop=True)
         
-        # PDF
+        # Bouton PDF
         col_pdf, col_csv = st.columns([1, 4])
         with col_pdf:
             pdf_bytes = create_pdf(al, st.session_state.nom)
@@ -298,62 +296,68 @@ with tab_dash:
                 type="primary"
             )
 
-        # DATA EDITOR (M3a el fix mte3 "id" w disabled)
-        edited_al = st.data_editor(
-            al,
+        # AFFICHAGE B' st.dataframe (MCH data_editor) - Ma fihch el bug mte3 None
+        display_al = al.drop(columns=['id']) # Nkhabbiw el ID
+        st.dataframe(
+            display_al,
+            use_container_width=True,
+            hide_index=True,
             column_config={
                 "Date": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, HH:mm"),
                 "Score": st.column_config.NumberColumn("Confiance IA", format="%.3f"),
                 "Debit": st.column_config.NumberColumn("Débit (m³/h)", format="%.2f"),
                 "Cout": st.column_config.NumberColumn("Coût (DT/mois)", format="%.0f DT"),
-                "Statut": st.column_config.SelectboxColumn("État", options=["Nouvelle", "En cours", "Résolue"], required=True),
-                "Note": st.column_config.TextColumn("Note Maintenance")
-            },
-            disabled=["id", "Date", "Client", "Zone", "Score", "Debit", "Cout", "Note"], # N7ERMOU EL MODIFICATION 3LA HEDHOM
-            hide_index=True, 
-            use_container_width=True, 
-            key="editor_alertes"
+            }
         )
-        
-        changed = False
-        for i in range(len(al)):
-            if al.loc[i, 'Statut'] != edited_al.loc[i, 'Statut']:
-                conn.execute("UPDATE alertes SET statut = ? WHERE id = ?", (edited_al.loc[i, 'Statut'], al.loc[i, 'id']))
-                if edited_al.loc[i, 'Statut'] == 'Résolue':
-                    cout_sauve = al.loc[i, 'Cout']
-                    litres_sauves = al.loc[i, 'Debit'] * 24 * 30 * 1000
-                    st.toast(f"🎉 Excellente décision ! Vous venez d'économiser {litres_sauves:,.0f} L d'eau et {cout_sauve:,.0f} DT/mois.", icon="✅")
-                changed = True
-        if changed:
-            conn.commit()
-            st.rerun()
 
-        # --- MAINTENANCE TICKET ---
+        # --- FORMULAIRE POUR BADDEL EL STATUT (7al badil lel data_editor) ---
         st.markdown("---")
-        st.markdown("### 🛠️ Assigner un Ticket de Maintenance")
-        st.info("Sélectionnez une fuite active pour assigner un technicien et ajouter une note.")
+        st.markdown("### ✏️ Mettre à jour le statut d'une fuite")
         
         al_actives = al[al['Statut'] != 'Résolue']
         if not al_actives.empty:
             al_actives['Option'] = al_actives['Zone'] + " (Détecté le " + al_actives['Date'].dt.strftime('%d/%m/%Y') + ")"
             
+            with st.form("update_status_form"):
+                col_sel, col_stat = st.columns(2)
+                with col_sel:
+                    selected_fuite = st.selectbox("Choisir la fuite :", al_actives['Option'].tolist())
+                with col_stat:
+                    new_status = st.selectbox("Nouveau statut :", ["En cours", "Résolue"])
+                
+                if st.form_submit_button("Mettre à jour", type="primary"):
+                    fuite_id = al_actives[al_actives['Option'] == selected_fuite]['id'].values[0]
+                    conn.execute("UPDATE alertes SET statut = ? WHERE id = ?", (new_status, fuite_id))
+                    conn.commit()
+                    if new_status == 'Résolue':
+                        cout_sauve = al_actives[al_actives['id'] == fuite_id]['Cout'].values[0]
+                        litres_sauves = al_actives[al_actives['id'] == fuite_id]['Debit'].values[0] * 24 * 30 * 1000
+                        st.toast(f"🎉 Excellente décision ! Vous venez d'économiser {litres_sauves:,.0f} L d'eau et {cout_sauve:,.0f} DT/mois.", icon="✅")
+                    st.rerun()
+        else:
+            st.success("✅ Toutes les fuites sont résolues.")
+
+        # --- TICKET DE MAINTENANCE ---
+        st.markdown("---")
+        st.markdown("### 🛠️ Assigner un Ticket de Maintenance")
+        if not al_actives.empty:
             with st.form("maintenance_form"):
-                selected_fuite = st.selectbox("Choisir la fuite :", al_actives['Option'].tolist())
-                technicien = st.text_input("Nom du technicien / Plombier :")
+                selected_fuite_m = st.selectbox("Choisir la fuite :", al_actives['Option'].tolist(), key="maint_select")
+                technicien = st.text_input("Nom du technicien :")
                 note = st.text_area("Détails de l'intervention :")
                 
                 if st.form_submit_button("Créer le Ticket & Passer en 'En cours'", type="primary"):
                     if technicien and note:
-                        fuite_id = al_actives[al_actives['Option'] == selected_fuite]['id'].values[0]
+                        fuite_id = al_actives[al_actives['Option'] == selected_fuite_m]['id'].values[0]
                         full_note = f"[{technicien}] : {note}"
                         conn.execute("UPDATE alertes SET statut = 'En cours', maintenance_note = ? WHERE id = ?", (full_note, fuite_id))
                         conn.commit()
-                        st.success("✅ Ticket créé avec succès ! Le statut a été mis à jour.")
+                        st.success("✅ Ticket créé avec succès !")
                         st.rerun()
                     else:
-                        st.error("Veuillez remplir le nom du technicien et les détails.")
+                        st.error("Veuillez remplir le nom et les détails.")
         else:
-            st.success("✅ Toutes les fuites ont été résolues. Aucun ticket à créer.")
+            st.success("✅ Aucun ticket à créer.")
 
         st.markdown(f'<div class="custom-warning">⚠️ <b>Action Requise :</b> Ces fuites vous coûtent de l\'argent. Passez le statut à "Résolue" une fois réparées.</div>', unsafe_allow_html=True)
     else:
