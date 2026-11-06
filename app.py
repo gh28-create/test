@@ -99,7 +99,7 @@ if not os.path.exists(DB_FILE):
 conn = get_db()
 
 # ==========================================
-# INITIALISATION CHAT (Fully In-Memory via Session State)
+# INITIALISATION CHAT (Mémoire)
 # ==========================================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = {
@@ -194,7 +194,7 @@ with tab_dash:
             st.plotly_chart(fig2, width='stretch')
 
 # ------------------------------------------
-# TAB 2 : CHAT & SUPPORT (100% Bulletproof)
+# TAB 2 : CHAT & SUPPORT (Version ZAKI)
 # ------------------------------------------
 with tab_chat:
     st.markdown("### 💬 Messagerie avec le Support AquaSense")
@@ -208,7 +208,6 @@ with tab_chat:
         chat_cid = st.session_state.cid
         st.info("Posez vos questions techniques ou demandez de l'aide.")
 
-    # Affichage de l'historique depuis la mémoire
     chat_box = st.container(height=400)
     with chat_box:
         for m in st.session_state.chat_history[chat_cid]:
@@ -216,7 +215,6 @@ with tab_chat:
                 st.write(f"**{m['sender']}** ({m['ts']})")
                 st.write(m['text'])
 
-    # Boutons rapides
     if st.session_state.role == "client":
         st.markdown("**💡 Questions fréquentes (Cliquez pour envoyer) :**")
         col_b1, col_b2, col_b3 = st.columns(3)
@@ -232,10 +230,8 @@ with tab_chat:
         
         if prompt_btn:
             ts_now = datetime.now().strftime('%H:%M')
-            # Ajouter message client
             st.session_state.chat_history[chat_cid].append({"role": "client", "sender": st.session_state.nom, "text": prompt_btn, "ts": ts_now})
             
-            # Ajouter réponse Bot
             bot_reply = "Un technicien va vous répondre sous peu."
             if "fuite" in prompt_btn.lower(): bot_reply = "Nous avons noté la fuite. L'équipe de maintenance intervient sous 24h."
             elif "prix" in prompt_btn.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
@@ -244,18 +240,30 @@ with tab_chat:
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
             st.rerun()
 
-    # Zone de saisie (st.chat_input howwa elli yekhdem mrigla w y7ell el clavier)
     if prompt := st.chat_input("Tapez votre message ici..."):
         ts_now = datetime.now().strftime('%H:%M')
-        
-        # Ajouter message client
         st.session_state.chat_history[chat_cid].append({"role": st.session_state.role, "sender": st.session_state.nom, "text": prompt, "ts": ts_now})
         
-        # Réponse Bot
         if st.session_state.role == "client":
             bot_reply = "Bonjour ! Un technicien va vérifier ces données. Vérifiez les vannes la nuit."
-            if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
-            elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
+            
+            # ------------- HNA EL LOGIC EL ZAKI -------------
+            # Ila el client se9si 3al akber fuite
+            if ("plus grande" in prompt.lower() or "plus grosse" in prompt.lower()) and "fuite" in prompt.lower():
+                # Nemchiw lel base de données nchoufou akber fuite mte3 hadha el client
+                query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} ORDER BY a.cout DESC LIMIT 1", conn)
+                if not query_top.empty:
+                    top_zone = query_top.iloc[0]['zone']
+                    top_cout = query_top.iloc[0]['cout']
+                    bot_reply = f"D'après mon analyse des données, la fuite la plus coûteuse se situe dans la zone **{top_zone}**. Elle vous coûte environ **{top_cout:,.0f} DT / mois**. Je vous conseille de faire vérifier cette zone en priorité."
+                else:
+                    bot_reply = "Je n'ai détecté aucune fuite dans vos données actuelles."
+            # ------------- FIN LOGIC -------------
+            
+            elif "fuite" in prompt.lower(): 
+                bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
+            elif "prix" in prompt.lower() or "payer" in prompt.lower(): 
+                bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
             
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
         
