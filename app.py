@@ -99,10 +99,10 @@ def create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, pers
     return bytes(pdf.output())
 
 # ==========================================
-# INITIALISATION DB & IA (IN-MEMORY) - Baddalna el esm bch nna7iw el cache
+# INITIALISATION DB & IA (IN-MEMORY)
 # ==========================================
 @st.cache_resource(show_spinner="Initialisation de la base de données...")
-def init_db_v4():
+def init_db_v5():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY, nom TEXT, secteur TEXT, ville TEXT, tarif REAL);
@@ -170,7 +170,7 @@ def generate_alerts(conn):
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     conn.commit()
 
-conn = init_db_v4()
+conn = init_db_v5()
 
 # ==========================================
 # INITIALISATION CHAT
@@ -254,7 +254,7 @@ st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow
 tab_dash, tab_roi, tab_chat = st.tabs(["📊 Tableau de Bord", "💰 Impact & ROI", "💬 Support & Chat"])
 
 # ------------------------------------------
-# TAB 1 : DASHBOARD (FIX 100% : Na7ina data_editor)
+# TAB 1 : DASHBOARD (FIX 100% : Sans column_config)
 # ------------------------------------------
 with tab_dash:
     where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
@@ -296,21 +296,26 @@ with tab_dash:
                 type="primary"
             )
 
-        # AFFICHAGE B' st.dataframe (MCH data_editor) - Ma fihch el bug mte3 None
-        display_al = al.drop(columns=['id']) # Nkhabbiw el ID
-        st.dataframe(
-            display_al,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Date": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, HH:mm"),
-                "Score": st.column_config.NumberColumn("Confiance IA", format="%.3f"),
-                "Debit": st.column_config.NumberColumn("Débit (m³/h)", format="%.2f"),
-                "Cout": st.column_config.NumberColumn("Coût (DT/mois)", format="%.0f DT"),
-            }
-        )
+        # --- HNA EL FIX EL AKID : FORMATAGE MANUEL ---
+        display_al = al.drop(columns=['id']).copy()
+        
+        # Formatting lel affichage (bch ma ybanch None)
+        display_al['Date'] = display_al['Date'].dt.strftime('%d/%m/%Y %H:%M')
+        display_al['Score'] = display_al['Score'].apply(lambda x: f"{x:.3f}")
+        display_al['Debit'] = display_al['Debit'].apply(lambda x: f"{x:.2f} m³/h")
+        display_al['Cout'] = display_al['Cout'].apply(lambda x: f"{x:,.0f} DT")
+        
+        display_al = display_al.rename(columns={
+            'Debit': 'Débit', 
+            'Cout': 'Coût (DT/mois)', 
+            'Score': 'Confiance IA',
+            'Note': 'Note Maintenance'
+        })
+        
+        # Affichage direct bla column_config
+        st.dataframe(display_al, use_container_width=True, hide_index=True)
 
-        # --- FORMULAIRE POUR BADDEL EL STATUT (7al badil lel data_editor) ---
+        # --- FORMULAIRE POUR BADDEL EL STATUT ---
         st.markdown("---")
         st.markdown("### ✏️ Mettre à jour le statut d'une fuite")
         
