@@ -1,9 +1,9 @@
 import streamlit as st
-import pandas as pd, numpy as np, sqlite3, random, os
+import pandas as pd, numpy as np, sqlite3, random, os, io
 from sklearn.ensemble import IsolationForest
 from datetime import datetime, timedelta
 import plotly.express as px
-from groq import Groq  # <-- IMPORT AJOUTÉ ICI
+from groq import Groq
 
 # ==========================================
 # CONFIGURATION & STYLE
@@ -30,7 +30,7 @@ st.markdown("""
 # ==========================================
 # INITIALISATION DB & IA (IN-MEMORY)
 # ==========================================
-@st.cache_resource(show_spinner="Initialisation de la base de données...")
+@st.cache_resource(show_spinner="Initialisation de la base de données et de l'IA...")
 def init_db():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.executescript("""
@@ -38,7 +38,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS compteurs(id INTEGER PRIMARY KEY, client_id INT, zone TEXT);
     CREATE TABLE IF NOT EXISTS releves(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, vol REAL);
     CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT, pwd TEXT, role TEXT, client_id INT, nom TEXT);
-    CREATE TABLE IF NOT EXISTS alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'nouvelle');
+    CREATE TABLE IF NOT EXISTS alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'Nouvelle');
     """)
     
     conn.executemany("INSERT INTO clients VALUES(?,?,?,?,?)", [
@@ -51,6 +51,7 @@ def init_db():
         (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
         (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
     
+    # Données simulées initiales
     random.seed(42); np.random.seed(42)
     start = datetime.utcnow() - timedelta(days=90)
     rows = []
@@ -70,7 +71,16 @@ def init_db():
     conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
     conn.commit()
     
+    # Lancement de l'IA
+    generate_alerts(conn)
+    return conn
+
+def generate_alerts(conn):
+    """Fonction séparée pour lancer l'IA (utilisée à l'init et lors de l'upload)"""
+    conn.execute("DELETE FROM alertes") # Nems7ou el 9dom
     df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
+    if df.empty: return
+    
     df['ts'] = pd.to_datetime(df['ts']); df['hour'] = df['ts'].dt.hour; df['is_night'] = df['hour'].between(2,5).astype(int)
     df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
     df['roll7'] = df.groupby('cid')['vol'].rolling(168, min_periods=24).mean().reset_index(0, drop=True)
@@ -91,7 +101,6 @@ def init_db():
             alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     conn.commit()
-    return conn
 
 conn = init_db()
 
@@ -99,10 +108,7 @@ conn = init_db()
 # INITIALISATION CHAT
 # ==========================================
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = {
-        1: [{"role": "client", "sender": "Hôtel Les Palmiers", "text": "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?", "ts": "12:43"}],
-        2: [], 3: [], 4: []
-    }
+    st.session_state.chat_history = {1: [], 2: [], 3: [], 4: []}
 
 # ==========================================
 # LOGIN
@@ -125,7 +131,7 @@ if not st.session_state.email:
                     st.session_state.update(email=row.iloc[0]['email'], role=row.iloc[0]['role'], nom=row.iloc[0]['nom'], cid=row.iloc[0]['client_id'])
                     st.rerun()
                 else: st.error("❌ Identifiants invalides.")
-        st.info("💡 **Comptes :**\nAdmin: admin@aquasense.tn / admin123\nClient Hôtel: hotel@aquasense.tn / hotel123\nClient Usine: textile@aquasense.tn / textile123")
+        st.info("💡 **Comptes :**\nAdmin: admin@aquasense.tn / admin123\nClient Hôtel: hotel@aquasense.tn / hotel123")
     st.stop()
 
 # ==========================================
@@ -135,7 +141,34 @@ with st.sidebar:
     st.title("💧 AquaSense Pro")
     st.markdown(f"**Utilisateur :** {st.session_state.nom}")
     st.markdown(f"**Rôle :** {st.session_state.role.capitalize()}")
-    st.markdown("---")
+    
+    # --- UPLOAD EXCEL (GHIR LEL ADMIN) ---
+    if st.session_state.role == "admin":
+        st.markdown("---")
+        st.markdown("### 📤 Importer des données")
+        uploaded_file = st.file_uploader("Fichier Excel / CSV (cid, ts, vol)", type=["csv", "xlsx"])
+        if uploaded_file is not None:
+            if st.button("Remplacer les données & Relancer l'IA"):
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        df_new = pd.read_csv(uploaded_file)
+                    else:
+                        df_new = pd.read_excel(uploaded_file)
+                    
+                    if not {'cid', 'ts', 'vol'}.issubset(df_new.columns):
+                        st.error("Erreur : Le fichier doit contenir les colonnes 'cid', 'ts' et 'vol'.")
+                    else:
+                        conn.execute("DELETE FROM releves") # Nems7ou el 9dom
+                        conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", 
+                                         df_new[['cid', 'ts', 'vol']].values.tolist())
+                        conn.commit()
+                        generate_alerts(conn) # N3awdou nkhadmou el IA
+                        st.success("✅ Données importées et IA relancée !")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur d'importation : {e}")
+        st.markdown("---")
+
     if st.button("🚪 Déconnexion", width='stretch'):
         for k in ("email","role","nom","cid"): st.session_state[k]=None
         st.rerun()
@@ -149,31 +182,57 @@ tab_dash, tab_chat = st.tabs(["📊 Tableau de Bord", "💬 Support & Chat"])
 # TAB 1 : DASHBOARD
 # ------------------------------------------
 with tab_dash:
-    k = pd.read_sql(f"SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f, COUNT(DISTINCT a.cid) nc FROM alertes a JOIN compteurs c ON c.id=a.cid {where}", conn).iloc[0]
+    # Filtre bch ma n7esbouch el fuites elli tsal7et
+    where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
+    
+    k = pd.read_sql(f"SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f, COUNT(DISTINCT a.cid) nc FROM alertes a JOIN compteurs c ON c.id=a.cid {where_kpi}", conn).iloc[0]
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🚨 Fuites Détectées", int(k['n']))
+    col1.metric("🚨 Fuites Actives", int(k['n']))
     col2.metric("🔧 Zones à Risque", int(k['nc']))
     col3.metric("💧 Débit Perdu (m³/h)", f"{k['f']:.2f}")
     col4.metric("💰 Économies Potentielles", f"{k['c']*12:,.0f} DT")
     st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Alertes de Fuites (Analysées par l'IA)")
-    al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)' FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
+    st.markdown("### 🚨 Alertes de Fuites (Modifiez le statut !)")
+    
+    # Hna beddelna l'query bch njibou el statut
+    al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)', a.statut AS Statut FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
-        def color_cost(val):
-            try:
-                v = float(val)
-                if v > 1000: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
-                elif v > 500: return 'background-color: #ffe6cc; color: #cc6600;'
-            except: pass
-            return 'background-color: #ffffcc;'
+        # Baddalna st.dataframe b st.data_editor
+        edited_al = st.data_editor(
+            al,
+            column_config={
+                "id": None, # Nkhabbiw el ID
+                "Date": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, HH:mm"),
+                "Score": st.column_config.NumberColumn("Score IA", format="%.3f"),
+                "Débit m³/h": st.column_config.NumberColumn("Débit m³/h", format="%.2f"),
+                "Coût (DT/mois)": st.column_config.NumberColumn("Coût (DT/mois)", format="%.0f DT"),
+                "Statut": st.column_config.SelectboxColumn(
+                    "Statut",
+                    help="Mettre à jour l'état de la fuite",
+                    options=["Nouvelle", "En cours", "Résolue"],
+                    required=True,
+                )
+            },
+            hide_index=True,
+            width='stretch',
+            key="alerts_editor"
+        )
         
-        st.dataframe(al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)']), width='stretch', hide_index=True)
-        st.markdown(f'<div class="custom-warning">⚠️ Action Requise : Réparer ces fuites vous permettrait d\'économiser environ {al["Coût (DT/mois)"].sum()*12:,.0f} DT par an.</div>', unsafe_allow_html=True)
-    else:
-        st.success("✅ Aucune fuite détectée.")
+        # Nchoufou wach el client baddel el statut
+        if not edited_al.equals(al):
+            for idx, row in edited_al.iterrows():
+                if row['Statut'] != al.loc[idx, 'Statut']:
+                    conn.execute("UPDATE alertes SET statut = ? WHERE id = ?", (row['Statut'], row['id']))
+            conn.commit()
+            st.rerun() # N3awdou ncharejiw bch les KPIs ytall3ou
 
+        st.markdown(f'<div class="custom-warning">⚠️ Action Requise : Les fuites "Nouvelles" et "En cours" vous coûtent de l\'argent. Réparer et passer le statut à "Résolue" fera baisser vos pertes.</div>', unsafe_allow_html=True)
+    else:
+        st.success("✅ Aucune fuite active. Votre installation est saine.")
+
+    # Graphes
     co = pd.read_sql(f"SELECT r.ts, r.vol, c.zone FROM releves r JOIN compteurs c ON c.id=r.cid {where}", conn)
     co['ts'] = pd.to_datetime(co['ts']); co['hour'] = co['ts'].dt.hour
     col_g1, col_g2 = st.columns(2)
@@ -183,13 +242,14 @@ with tab_dash:
         fig1.update_traces(line_color='#0077b6', line_width=3)
         st.plotly_chart(fig1, width='stretch')
     with col_g2:
-        if not al.empty:
-            by_zone = al.groupby('Zone')['Coût (DT/mois)'].sum().reset_index()
+        al_active = al[al['Statut'] != 'Résolue']
+        if not al_active.empty:
+            by_zone = al_active.groupby('Zone')['Coût (DT/mois)'].sum().reset_index()
             fig2 = px.pie(by_zone, names='Zone', values='Coût (DT/mois)', hole=0.5, color_discrete_sequence=px.colors.sequential.Reds_r)
             st.plotly_chart(fig2, width='stretch')
 
 # ------------------------------------------
-# TAB 2 : CHAT & SUPPORT (VERSION GROQ AI)
+# TAB 2 : CHAT & SUPPORT (Version GROQ AI)
 # ------------------------------------------
 with tab_chat:
     st.markdown("### 💬 Messagerie avec le Support AquaSense")
@@ -241,24 +301,23 @@ with tab_chat:
         st.session_state.chat_history[chat_cid].append({"role": st.session_state.role, "sender": st.session_state.nom, "text": prompt, "ts": ts_now})
         
         if st.session_state.role == "client":
-            query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} ORDER BY a.cout DESC LIMIT 3", conn)
+            # Njibou ken el fuites elli mch "Résolue"
+            query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} AND a.statut != 'Résolue' ORDER BY a.cout DESC LIMIT 3", conn)
             
             if not query_top.empty:
-                data_context = "Voici les fuites détectées pour ce client : \n"
+                data_context = "Voici les fuites ACTIVES détectées pour ce client : \n"
                 for _, row in query_top.iterrows():
                     data_context += f"- Zone: {row['zone']}, Coût: {row['cout']:.0f} DT/mois\n"
             else:
-                data_context = "Aucune fuite détectée pour ce client."
+                data_context = "Aucune fuite active détectée pour ce client."
 
             try:
-                # M3a l'API mte3ek. (Ila 7attit-ha fi Streamlit Secrets, hédha elli bch yekhdem)
                 api_key = st.secrets.get("GROQ_API_KEY", "")
-                
                 if api_key == "":
-                    bot_reply = "Erreur technique : Veuillez configurer votre clé API Groq dans les secrets Streamlit."
+                    bot_reply = "Erreur technique : Veuillez configurer votre clé API Groq."
                 else:
                     client_ai = Groq(api_key=api_key)
-                    system_prompt = f"Tu es le 'Bot AquaSense'. Tu parles à : {st.session_state.nom}. Voici ses données :\n{data_context}\nRéponds de manière pro, courte et précise. Si hors sujet (météo, foot), dis poliment que tu es un assistant pour l'eau."
+                    system_prompt = f"Tu es le 'Bot AquaSense'. Tu parles à : {st.session_state.nom}. Voici ses données ACTIVES :\n{data_context}\nRéponds de manière pro, courte et précise."
                     
                     chat_completion = client_ai.chat.completions.create(
                         messages=[
