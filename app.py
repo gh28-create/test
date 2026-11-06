@@ -51,7 +51,6 @@ def init_db():
         (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
         (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
     
-    # Génération données IA
     random.seed(42); np.random.seed(42)
     start = datetime.utcnow() - timedelta(days=90)
     rows = []
@@ -71,7 +70,6 @@ def init_db():
     conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
     conn.commit()
     
-    # IA Model
     df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
     df['ts'] = pd.to_datetime(df['ts']); df['hour'] = df['ts'].dt.hour; df['is_night'] = df['hour'].between(2,5).astype(int)
     df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
@@ -93,12 +91,10 @@ def init_db():
             alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     
-    # Message initial corrigé (utilisation de paramètres ? au lieu de texte brut)
     msg_text = "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?"
     ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
     conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
                  (1, 'Hôtel Les Palmiers', 'client', msg_text, ts_now))
-    
     conn.commit()
     return conn
 
@@ -143,7 +139,6 @@ with st.sidebar:
 where = "" if st.session_state.role=="admin" else f"WHERE c.client_id={st.session_state.cid}"
 st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow_html=True)
 
-# Création des Onglets (Tabs)
 tab_dash, tab_chat = st.tabs(["📊 Tableau de Bord", "💬 Support & Chat"])
 
 # ------------------------------------------
@@ -190,7 +185,7 @@ with tab_dash:
             st.plotly_chart(fig2, use_container_width=True)
 
 # ------------------------------------------
-# TAB 2 : CHAT & SUPPORT
+# TAB 2 : CHAT & SUPPORT (Mise à jour m3a Bouton)
 # ------------------------------------------
 with tab_chat:
     st.markdown("### 💬 Messagerie avec le Support AquaSense")
@@ -211,24 +206,28 @@ with tab_chat:
             st.write(f"**{m['sender']}** ({m['ts'][11:16]})")
             st.write(m['text'])
 
-    # Zone d'envoi
-    if prompt := st.chat_input("Tapez votre message ici..."):
-        ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-        
-        # Enregistrer le message avec paramètres (Anti-bug)
-        conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                     (chat_cid, st.session_state.nom, st.session_state.role, prompt, ts_now))
-        conn.commit()
-        
-        # Auto-réponse du Bot si c'est un client
-        if st.session_state.role == "client":
-            bot_reply = "Bonjour ! Un technicien va vérifier ces données. En attendant, voici quelques conseils : vérifiez les vannes la nuit."
-            if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
-            elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn pour la facturation."
-            elif "répar" in prompt.lower() or "régl" in prompt.lower(): bot_reply = "Une fois la réparation effectuée par vos plombiers, l'IA ajustera automatiquement les alertes."
+    # Zone d'envoi b' Bouton (Bch yekhdem 100%)
+    with st.form(key="chat_form", clear_on_submit=True):
+        prompt = st.text_input("Tapez votre message ici :")
+        submit_button = st.form_submit_button("Envoyer 🚀")
+
+        if submit_button and prompt:
+            ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
             
+            # Enregistrer message mte3 l'utilisateur
             conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                         (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
+                         (chat_cid, st.session_state.nom, st.session_state.role, prompt, ts_now))
             conn.commit()
-        
-        st.rerun()
+            
+            # Réponse mte3 l'IA ila kan client
+            if st.session_state.role == "client":
+                bot_reply = "Bonjour ! Un technicien va vérifier ces données. En attendant, voici quelques conseils : vérifiez les vannes la nuit."
+                if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
+                elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn pour la facturation."
+                elif "répar" in prompt.lower() or "régl" in prompt.lower(): bot_reply = "Une fois la réparation effectuée par vos plombiers, l'IA ajustera automatiquement les alertes."
+                
+                conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
+                             (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
+                conn.commit()
+            
+            st.rerun()
