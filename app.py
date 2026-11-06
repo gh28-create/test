@@ -3,7 +3,6 @@ import pandas as pd, numpy as np, sqlite3, random
 from sklearn.ensemble import IsolationForest
 from datetime import datetime, timedelta
 import plotly.express as px
-import plotly.graph_objects as go
 
 # ==========================================
 # CONFIGURATION & STYLE
@@ -167,9 +166,7 @@ if not st.session_state.email:
 # ==========================================
 # DASHBOARD (Interface Principale)
 # ==========================================
-# Sidebar
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3100/3100557.png", width=80)
     st.title("AquaSense Pro")
     st.markdown(f"**Utilisateur :** {st.session_state.nom}")
     st.markdown(f"**Rôle :** {st.session_state.role.capitalize()}")
@@ -185,10 +182,9 @@ with st.sidebar:
         for k in ("email","role","nom","cid"): st.session_state[k]=None
         st.rerun()
 
-# Filtre SQL
+# Filtre SQL pour l'isolation des données
 where = "" if st.session_state.role=="admin" else f"WHERE c.client_id={st.session_state.cid}"
 
-# Titre
 st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow_html=True)
 
 # --- KPIs ---
@@ -217,18 +213,24 @@ al = pd.read_sql(f"""SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone
 if al.empty:
     st.success("✅ Excellente nouvelle ! Aucune fuite détectée pour le moment.")
 else:
-    # Fonction pour colorer le tableau
-  AttributeError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
-Traceback:
-File "/mount/src/test/app.py", line 226, in <module>
-    st.dataframe(al.drop(columns=['id']).style.applymap(color_cost, subset=['Coût (DT/mois)']),
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    def color_cost(val):
+        try:
+            v = float(val)
+            if v > 1000: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
+            elif v > 500: return 'background-color: #ffe6cc; color: #cc6600;'
+        except:
+            pass
+        return 'background-color: #ffffcc;'
     
-    st.markdown(f"""
-    <div class="custom-warning">
-        ⚠️ Action Requise : Réparer ces fuites vous permettrait d'économiser environ {al['Coût (DT/mois)'].sum()*12:,.0f} DT par an.
-    </div>
-    """, unsafe_allow_html=True)
+    # Utilisation de .map() pour les nouvelles versions de Pandas
+    styled_al = al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)'])
+    
+    st.dataframe(styled_al, use_container_width=True, hide_index=True)
+    
+    st.markdown(
+        f'<div class="custom-warning">⚠️ Action Requise : Réparer ces fuites vous permettrait d\'économiser environ {al["Coût (DT/mois)"].sum()*12:,.0f} DT par an.</div>', 
+        unsafe_allow_html=True
+    )
 
 # --- GRAPHIQUES ---
 st.markdown("### 📈 Analyse de la Consommation")
@@ -242,7 +244,6 @@ col_g1, col_g2 = st.columns(2)
 
 with col_g1:
     st.markdown("**Profil Horaire Moyen (Courbe Normale vs Fuites)**")
-    # On calcule la moyenne normale
     prof = co.groupby('hour')['vol'].mean().reset_index()
     fig1 = px.line(prof, x='hour', y='vol', markers=True, 
                    labels={'vol':'Débit Moyen (m³/h)','hour':'Heure de la journée'})
@@ -262,4 +263,3 @@ with col_g2:
         st.caption("💡 Identifiez les zones qui vous coûtent le plus cher en eau.")
     else:
         st.info("Pas de données de coût à afficher.")
-
