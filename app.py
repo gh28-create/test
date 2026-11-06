@@ -218,13 +218,11 @@ if al.empty:
     st.success("✅ Excellente nouvelle ! Aucune fuite détectée pour le moment.")
 else:
     # Fonction pour colorer le tableau
-    def color_cost(val):
-        if val > 1000: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
-        elif val > 500: return 'background-color: #ffe6cc; color: #cc6600;'
-        return 'background-color: #ffffcc;'
-    
-    st.dataframe(al.drop(columns=['id']).style.applymap(color_cost, subset=['Coût (DT/mois)']), 
-                 use_container_width=True, hide_index=True)
+  AttributeError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+File "/mount/src/test/app.py", line 226, in <module>
+    st.dataframe(al.drop(columns=['id']).style.applymap(color_cost, subset=['Coût (DT/mois)']),
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     
     st.markdown(f"""
     <div class="custom-warning">
