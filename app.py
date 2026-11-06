@@ -27,14 +27,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# INITIALISATION DB (Fichier mch Memory) & IA
+# INITIALISATION DB (Bla Cache bch ma ykounch mochkla)
 # ==========================================
-@st.cache_resource
-def init_db():
-    # Beddelna :memory: b fichier 7a9i9i bch el messages ma yemchiwch
-    conn = sqlite3.connect("aquasense.db", check_same_thread=False)
-    
-    # Création des tables (ila mch mawjoudin)
+DB_FILE = "aquasense.db"
+
+def get_db():
+    return sqlite3.connect(DB_FILE, check_same_thread=False)
+
+# Nchoufou wach el base mawjouda, ila lel nkhal9ouha w n3ammrouha
+if not os.path.exists(DB_FILE):
+    conn = get_db()
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY, nom TEXT, secteur TEXT, ville TEXT, tarif REAL);
     CREATE TABLE IF NOT EXISTS compteurs(id INTEGER PRIMARY KEY, client_id INT, zone TEXT);
@@ -44,74 +46,65 @@ def init_db():
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INT, sender TEXT, role TEXT, text TEXT, ts DATETIME);
     """)
     
-    # Nchoufou wach el base t3ammret deja wala le (bch ma n3awdou des données)
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM clients")
-    if cursor.fetchone()[0] == 0:
-        # Génération des données (Ghadi yji hna ghir awel marra)
-        conn.executemany("INSERT INTO clients VALUES(?,?,?,?,?)", [
-            (1,'Hôtel Les Palmiers','Hôtellerie','Hammamet',2.8), (2,'TextileMed SARL','Textile','Monastir',2.5),
-            (3,'AgroPlus','Agroalimentaire','Sfax',2.4), (4,'Résidence Marina','Hôtellerie','Sousse',2.8)])
-        conn.executemany("INSERT INTO compteurs VALUES(?,?,?)", [
-            (1,1,'global'),(2,1,'blanchisserie'),(3,1,'piscine'), (4,2,'global'),(5,2,'process'),(6,3,'global'), (7,4,'global'),(8,4,'sanitaires')])
-        conn.executemany("INSERT INTO users VALUES(?,?,?,?,?,?)", [
-            (1,'admin@aquasense.tn','admin123','admin',None,'Administrateur AquaSense'),
-            (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
-            (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
-        
-        random.seed(42); np.random.seed(42)
-        start = datetime.utcnow() - timedelta(days=90)
-        rows = []
-        def profil(h):
-            if 2 <= h <= 5: return 0.05
-            if 8 <= h <= 18: return 0.40
-            return 0.15
-        for cid in range(1,9):
-            for d in range(90):
-                for h in range(24):
-                    ts = start + timedelta(days=d, hours=h)
-                    v = max(0, profil(h) + random.uniform(-0.05, 0.05))
-                    if cid==2 and d>=60 and 2<=h<=5: v += 0.90
-                    if cid==5 and d>=75 and 0<=h<=6: v += 0.60
-                    if cid==8 and d>=50 and (h>=22 or h<=3): v += 0.45
-                    rows.append((cid, ts.strftime('%Y-%m-%d %H:%M:%S'), round(v,3)))
-        conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
-        conn.commit()
-        
-        df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
-        df['ts'] = pd.to_datetime(df['ts']); df['hour'] = df['ts'].dt.hour; df['is_night'] = df['hour'].between(2,5).astype(int)
-        df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
-        df['roll7'] = df.groupby('cid')['vol'].rolling(168, min_periods=24).mean().reset_index(0, drop=True)
-        df['hmean'] = df.groupby(['cid', 'hour'])['vol'].transform('mean')
-        df['ratio'] = df['vol'] / (df['hmean'] + 0.01); df = df.dropna(subset=['roll7'])
-        
-        alerts = []
-        for cid, g in df.groupby('cid'):
-            X = g[['vol','hour','roll7','ratio','is_night']].fillna(0).values
-            if len(X) < 50: continue
-            m = IsolationForest(contamination=0.02, random_state=42).fit(X)
-            g = g.copy(); g['score'] = -m.score_samples(X)
-            sus = g[(g['score']>np.percentile(g['score'], 98)) & (g['vol']>0.2)].copy()
-            if sus.empty: continue
-            sus['date'] = sus['ts'].dt.date; sus = sus.sort_values('score', ascending=False).drop_duplicates(['cid','date'])
-            for _, r in sus.iterrows():
-                f = max(0, r['vol'] - r['hmean'])
-                alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
-        conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
-        
-        msg_text = "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?"
-        ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-        conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                     (1, 'Hôtel Les Palmiers', 'client', msg_text, ts_now))
-        conn.commit()
-        
-    return conn
+    conn.executemany("INSERT INTO clients VALUES(?,?,?,?,?)", [
+        (1,'Hôtel Les Palmiers','Hôtellerie','Hammamet',2.8), (2,'TextileMed SARL','Textile','Monastir',2.5),
+        (3,'AgroPlus','Agroalimentaire','Sfax',2.4), (4,'Résidence Marina','Hôtellerie','Sousse',2.8)])
+    conn.executemany("INSERT INTO compteurs VALUES(?,?,?)", [
+        (1,1,'global'),(2,1,'blanchisserie'),(3,1,'piscine'), (4,2,'global'),(5,2,'process'),(6,3,'global'), (7,4,'global'),(8,4,'sanitaires')])
+    conn.executemany("INSERT INTO users VALUES(?,?,?,?,?,?)", [
+        (1,'admin@aquasense.tn','admin123','admin',None,'Administrateur AquaSense'),
+        (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
+        (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
+    
+    random.seed(42); np.random.seed(42)
+    start = datetime.utcnow() - timedelta(days=90)
+    rows = []
+    def profil(h):
+        if 2 <= h <= 5: return 0.05
+        if 8 <= h <= 18: return 0.40
+        return 0.15
+    for cid in range(1,9):
+        for d in range(90):
+            for h in range(24):
+                ts = start + timedelta(days=d, hours=h)
+                v = max(0, profil(h) + random.uniform(-0.05, 0.05))
+                if cid==2 and d>=60 and 2<=h<=5: v += 0.90
+                if cid==5 and d>=75 and 0<=h<=6: v += 0.60
+                if cid==8 and d>=50 and (h>=22 or h<=3): v += 0.45
+                rows.append((cid, ts.strftime('%Y-%m-%d %H:%M:%S'), round(v,3)))
+    conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
+    conn.commit()
+    
+    # --- IA ---
+    df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
+    df['ts'] = pd.to_datetime(df['ts']); df['hour'] = df['ts'].dt.hour; df['is_night'] = df['hour'].between(2,5).astype(int)
+    df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
+    df['roll7'] = df.groupby('cid')['vol'].rolling(168, min_periods=24).mean().reset_index(0, drop=True)
+    df['hmean'] = df.groupby(['cid', 'hour'])['vol'].transform('mean')
+    df['ratio'] = df['vol'] / (df['hmean'] + 0.01); df = df.dropna(subset=['roll7'])
+    
+    alerts = []
+    for cid, g in df.groupby('cid'):
+        X = g[['vol','hour','roll7','ratio','is_night']].fillna(0).values
+        if len(X) < 50: continue
+        m = IsolationForest(contamination=0.02, random_state=42).fit(X)
+        g = g.copy(); g['score'] = -m.score_samples(X)
+        sus = g[(g['score']>np.percentile(g['score'], 98)) & (g['vol']>0.2)].copy()
+        if sus.empty: continue
+        sus['date'] = sus['ts'].dt.date; sus = sus.sort_values('score', ascending=False).drop_duplicates(['cid','date'])
+        for _, r in sus.iterrows():
+            f = max(0, r['vol'] - r['hmean'])
+            alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
+    conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
+    
+    msg_text = "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?"
+    ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+    conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", (1, 'Hôtel Les Palmiers', 'client', msg_text, ts_now))
+    conn.commit()
+    conn.close()
 
-# N7esslou el fichier 9dim ila kan (bch yebda nadi)
-if not os.path.exists("aquasense.db"):
-    conn = init_db()
-else:
-    conn = init_db()
+# N7ellou connexion jdida m3a kol clik (bch ma ykounch mochkla m3a el refresh)
+conn = get_db()
 
 # ==========================================
 # LOGIN
@@ -219,29 +212,53 @@ with tab_chat:
             st.write(f"**{m['sender']}** ({m['ts'][11:16]})")
             st.write(m['text'])
 
-    # Zone d'envoi b' Bouton
+    # BOUTONS RAPIDES (Le point fort lel demo)
+    if st.session_state.role == "client":
+        st.markdown("**💡 Questions fréquentes (Cliquez pour envoyer) :**")
+        col_b1, col_b2, col_b3 = st.columns(3)
+        
+        btn_fuite = col_b1.button("🔧 Réparer une fuite", use_container_width=True)
+        btn_prix = col_b2.button("💰 Prix de l'abonnement", use_container_width=True)
+        btn_urgence = col_b3.button("🚨 Intervention urgente", use_container_width=True)
+        
+        prompt_btn = None
+        if btn_fuite: prompt_btn = "Comment faire pour réparer une fuite ?"
+        elif btn_prix: prompt_btn = "Quel est le prix de l'abonnement ?"
+        elif btn_urgence: prompt_btn = "J'ai besoin d'une intervention urgente."
+        
+        if prompt_btn:
+            ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+            conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
+                         (chat_cid, st.session_state.nom, "client", prompt_btn, ts_now))
+            conn.commit()
+            
+            bot_reply = "Un technicien va vous répondre sous peu."
+            if "fuite" in prompt_btn.lower(): bot_reply = "Nous avons noté la fuite. L'équipe de maintenance intervient sous 24h."
+            elif "prix" in prompt_btn.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
+            elif "urgence" in prompt_btn.lower(): bot_reply = "Urgence enregistrée. Un technicien vous appellera dans les plus brefs délais."
+            
+            conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
+                         (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
+            conn.commit()
+            st.rerun()
+
+    # Zone de texte manuelle
     with st.form(key="chat_form", clear_on_submit=True):
         prompt = st.text_input("Tapez votre message ici :")
         submit_button = st.form_submit_button("Envoyer 🚀")
 
         if submit_button and prompt:
             ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-            
-            # Enregistrer message
             conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
                          (chat_cid, st.session_state.nom, st.session_state.role, prompt, ts_now))
             conn.commit()
             
-            # Réponse mte3 l'IA
             if st.session_state.role == "client":
-                bot_reply = "Bonjour ! Un technicien va vérifier ces données. En attendant, voici quelques conseils : vérifiez les vannes la nuit."
+                bot_reply = "Bonjour ! Un technicien va vérifier ces données. Vérifiez les vannes la nuit."
                 if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
-                elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn pour la facturation."
-                elif "répar" in prompt.lower() or "régl" in prompt.lower(): bot_reply = "Une fois la réparation effectuée par vos plombiers, l'IA ajustera automatiquement les alertes."
+                elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
                 
                 conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
                              (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
                 conn.commit()
-            
-            # Rerun bch yban el message direct
             st.rerun()
