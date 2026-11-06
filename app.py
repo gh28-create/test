@@ -3,7 +3,7 @@ import pandas as pd, numpy as np, sqlite3, random, os
 from sklearn.ensemble import IsolationForest
 from datetime import datetime, timedelta
 import plotly.express as px
-
+from groq import Groq
 # ==========================================
 # CONFIGURATION & STYLE
 # ==========================================
@@ -240,30 +240,47 @@ with tab_chat:
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
             st.rerun()
 
-    if prompt := st.chat_input("Tapez votre message ici..."):
+        if prompt := st.chat_input("Tapez votre message ici..."):
         ts_now = datetime.now().strftime('%H:%M')
         st.session_state.chat_history[chat_cid].append({"role": st.session_state.role, "sender": st.session_state.nom, "text": prompt, "ts": ts_now})
         
         if st.session_state.role == "client":
-            bot_reply = "Bonjour ! Un technicien va vérifier ces données. Vérifiez les vannes la nuit."
+            # 1. Récupération des données du client pour les donner à l'IA
+            query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} ORDER BY a.cout DESC LIMIT 3", conn)
             
-            # ------------- HNA EL LOGIC EL ZAKI -------------
-            # Ila el client se9si 3al akber fuite
-            if ("plus grande" in prompt.lower() or "plus grosse" in prompt.lower()) and "fuite" in prompt.lower():
-                # Nemchiw lel base de données nchoufou akber fuite mte3 hadha el client
-                query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} ORDER BY a.cout DESC LIMIT 1", conn)
-                if not query_top.empty:
-                    top_zone = query_top.iloc[0]['zone']
-                    top_cout = query_top.iloc[0]['cout']
-                    bot_reply = f"D'après mon analyse des données, la fuite la plus coûteuse se situe dans la zone **{top_zone}**. Elle vous coûte environ **{top_cout:,.0f} DT / mois**. Je vous conseille de faire vérifier cette zone en priorité."
-                else:
-                    bot_reply = "Je n'ai détecté aucune fuite dans vos données actuelles."
-            # ------------- FIN LOGIC -------------
-            
-            elif "fuite" in prompt.lower(): 
-                bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
-            elif "prix" in prompt.lower() or "payer" in prompt.lower(): 
-                bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
+            if not query_top.empty:
+                data_context = "Voici les fuites détectées pour ce client : \n"
+                for _, row in query_top.iterrows():
+                    data_context += f"- Zone: {row['zone']}, Coût: {row['cout']:.0f} DT/mois\n"
+            else:
+                data_context = "Aucune fuite détectée pour ce client."
+
+            # 2. Appel à l'IA Groq
+            try:
+                # Récupération sécurisée de la clé depuis les Secrets Streamlit
+                client_ai = Groq(api_key=st.secrets["GROQ_API_KEY"]) 
+                
+                system_prompt = f"""
+                Tu es le 'Bot AquaSense', l'assistant intelligent de la plateforme AquaSense Pro.
+                Tu parles à l'utilisateur : {st.session_state.nom}.
+                Voici les vraies données de consommation d'eau de ce client :
+                {data_context}
+                
+                Réponds à la question du client de manière professionnelle, courte et précise en te basant sur ces données.
+                Si le client pose une question hors sujet (météo, football, etc.), réponds poliment que tu es uniquement un assistant pour la gestion de l'eau.
+                """
+                
+                chat_completion = client_ai.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model="llama-3.3-70b-versatile", # Modèle puissant et rapide
+                )
+                bot_reply = chat_completion.choices[0].message.content
+                
+            except Exception as e:
+                bot_reply = "Désolé, je rencontre une petite erreur technique. Un agent humain va prendre le relais."
             
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
         
