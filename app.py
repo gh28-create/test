@@ -50,21 +50,22 @@ def init_db():
                 rows.append((cid, ts.strftime('%Y-%m-%d %H:%M:%S'), round(v,3)))
     conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
     conn.commit()
-    # --- IA ---
-    df = pd.read_sql("""SELECT r.cid, r.ts, r.vol, cl.tarif
+    
+    # --- IA (Corrigé pour compatibilité maximale) ---
+    df = pd.read_sql("""SELECT r.cid AS cid, r.ts AS ts, r.vol AS vol, cl.tarif AS tarif
                         FROM releves r
                         JOIN compteurs c ON c.id=r.cid
                         JOIN clients cl ON cl.id=c.client_id""", conn)
     df['ts'] = pd.to_datetime(df['ts'])
     df['hour'] = df['ts'].dt.hour
     df['is_night'] = df['hour'].between(2,5).astype(int)
-    def feat(g):
-        g = g.sort_values('ts').copy()
-        g['roll7'] = g['vol'].rolling(168, min_periods=24).mean()
-        g['hmean'] = g.groupby('hour')['vol'].transform('mean')
-        g['ratio'] = g['vol']/(g['hmean']+0.01)
-        return g
-    df = df.groupby('cid', group_keys=False).apply(feat).dropna(subset=['roll7'])
+    
+    df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
+    df['roll7'] = df.groupby('cid')['vol'].rolling(168, min_periods=24).mean().reset_index(0, drop=True)
+    df['hmean'] = df.groupby(['cid', 'hour'])['vol'].transform('mean')
+    df['ratio'] = df['vol'] / (df['hmean'] + 0.01)
+    df = df.dropna(subset=['roll7'])
+    
     F = ['vol','hour','roll7','ratio','is_night']
     alerts = []
     for cid, g in df.groupby('cid'):
