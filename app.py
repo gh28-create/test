@@ -27,7 +27,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# INITIALISATION DB
+# INITIALISATION DB & IA (Dashboard Only)
 # ==========================================
 DB_FILE = "aquasense.db"
 
@@ -42,7 +42,6 @@ if not os.path.exists(DB_FILE):
     CREATE TABLE IF NOT EXISTS releves(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, vol REAL);
     CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT, pwd TEXT, role TEXT, client_id INT, nom TEXT);
     CREATE TABLE IF NOT EXISTS alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'nouvelle');
-    CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INT, sender TEXT, role TEXT, text TEXT, ts DATETIME);
     """)
     
     conn.executemany("INSERT INTO clients VALUES(?,?,?,?,?)", [
@@ -94,14 +93,21 @@ if not os.path.exists(DB_FILE):
             f = max(0, r['vol'] - r['hmean'])
             alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
-    
-    msg_text = "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?"
-    ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-    conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", (1, 'Hôtel Les Palmiers', 'client', msg_text, ts_now))
     conn.commit()
     conn.close()
 
 conn = get_db()
+
+# ==========================================
+# INITIALISATION CHAT (Fully In-Memory via Session State)
+# ==========================================
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = {
+        1: [{"role": "client", "sender": "Hôtel Les Palmiers", "text": "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?", "ts": "12:43"}],
+        2: [],
+        3: [],
+        4: []
+    }
 
 # ==========================================
 # LOGIN
@@ -118,7 +124,6 @@ if not st.session_state.email:
         with st.form("login"):
             e = st.text_input("📧 Email", "admin@aquasense.tn")
             p = st.text_input("🔒 Mot de passe", "admin123", type="password")
-            # Modifié hna: baddalna use_container_width b width='stretch'
             if st.form_submit_button("Se connecter", width='stretch', type="primary"):
                 row = pd.read_sql("SELECT * FROM users WHERE email=? AND pwd=?", conn, params=(e, p))
                 if not row.empty:
@@ -136,7 +141,6 @@ with st.sidebar:
     st.markdown(f"**Utilisateur :** {st.session_state.nom}")
     st.markdown(f"**Rôle :** {st.session_state.role.capitalize()}")
     st.markdown("---")
-    # Modifié hna: baddalna use_container_width b width='stretch'
     if st.button("🚪 Déconnexion", width='stretch'):
         for k in ("email","role","nom","cid"): st.session_state[k]=None
         st.rerun()
@@ -170,7 +174,6 @@ with tab_dash:
             except: pass
             return 'background-color: #ffffcc;'
         
-        # Modifié hna: baddalna use_container_width b width='stretch'
         st.dataframe(al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)']), width='stretch', hide_index=True)
         st.markdown(f'<div class="custom-warning">⚠️ Action Requise : Réparer ces fuites vous permettrait d\'économiser environ {al["Coût (DT/mois)"].sum()*12:,.0f} DT par an.</div>', unsafe_allow_html=True)
     else:
@@ -183,17 +186,15 @@ with tab_dash:
         prof = co.groupby('hour')['vol'].mean().reset_index()
         fig1 = px.line(prof, x='hour', y='vol', markers=True, labels={'vol':'Débit Moyen (m³/h)','hour':'Heure'})
         fig1.update_traces(line_color='#0077b6', line_width=3)
-        # Modifié hna: baddalna use_container_width b width='stretch'
         st.plotly_chart(fig1, width='stretch')
     with col_g2:
         if not al.empty:
             by_zone = al.groupby('Zone')['Coût (DT/mois)'].sum().reset_index()
             fig2 = px.pie(by_zone, names='Zone', values='Coût (DT/mois)', hole=0.5, color_discrete_sequence=px.colors.sequential.Reds_r)
-            # Modifié hna: baddalna use_container_width b width='stretch'
             st.plotly_chart(fig2, width='stretch')
 
 # ------------------------------------------
-# TAB 2 : CHAT & SUPPORT
+# TAB 2 : CHAT & SUPPORT (100% Bulletproof)
 # ------------------------------------------
 with tab_chat:
     st.markdown("### 💬 Messagerie avec le Support AquaSense")
@@ -207,17 +208,19 @@ with tab_chat:
         chat_cid = st.session_state.cid
         st.info("Posez vos questions techniques ou demandez de l'aide.")
 
-    msgs = pd.read_sql(f"SELECT sender, role, text, ts FROM messages WHERE client_id={chat_cid} ORDER BY ts", conn)
-    for _, m in msgs.iterrows():
-        with st.chat_message("user" if m['role'] == st.session_state.role else "assistant"):
-            st.write(f"**{m['sender']}** ({m['ts'][11:16]})")
-            st.write(m['text'])
+    # Affichage de l'historique depuis la mémoire
+    chat_box = st.container(height=400)
+    with chat_box:
+        for m in st.session_state.chat_history[chat_cid]:
+            with st.chat_message("user" if m['role'] == st.session_state.role else "assistant"):
+                st.write(f"**{m['sender']}** ({m['ts']})")
+                st.write(m['text'])
 
+    # Boutons rapides
     if st.session_state.role == "client":
         st.markdown("**💡 Questions fréquentes (Cliquez pour envoyer) :**")
         col_b1, col_b2, col_b3 = st.columns(3)
         
-        # Modifié hna: baddalna use_container_width b width='stretch'
         btn_fuite = col_b1.button("🔧 Réparer une fuite", width='stretch')
         btn_prix = col_b2.button("💰 Prix de l'abonnement", width='stretch')
         btn_urgence = col_b3.button("🚨 Intervention urgente", width='stretch')
@@ -228,38 +231,32 @@ with tab_chat:
         elif btn_urgence: prompt_btn = "J'ai besoin d'une intervention urgente."
         
         if prompt_btn:
-            ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-            conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                         (chat_cid, st.session_state.nom, "client", prompt_btn, ts_now))
-            conn.commit()
+            ts_now = datetime.now().strftime('%H:%M')
+            # Ajouter message client
+            st.session_state.chat_history[chat_cid].append({"role": "client", "sender": st.session_state.nom, "text": prompt_btn, "ts": ts_now})
             
+            # Ajouter réponse Bot
             bot_reply = "Un technicien va vous répondre sous peu."
             if "fuite" in prompt_btn.lower(): bot_reply = "Nous avons noté la fuite. L'équipe de maintenance intervient sous 24h."
             elif "prix" in prompt_btn.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
             elif "urgence" in prompt_btn.lower(): bot_reply = "Urgence enregistrée. Un technicien vous appellera dans les plus brefs délais."
             
-            conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                         (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
-            conn.commit()
+            st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
             st.rerun()
 
-    with st.form(key="chat_form", clear_on_submit=True):
-        prompt = st.text_input("Tapez votre message ici :")
-        # Modifié hna: baddalna use_container_width b width='stretch'
-        submit_button = st.form_submit_button("Envoyer 🚀", width='stretch')
-
-        if submit_button and prompt:
-            ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
-            conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                         (chat_cid, st.session_state.nom, st.session_state.role, prompt, ts_now))
-            conn.commit()
+    # Zone de saisie (st.chat_input howwa elli yekhdem mrigla w y7ell el clavier)
+    if prompt := st.chat_input("Tapez votre message ici..."):
+        ts_now = datetime.now().strftime('%H:%M')
+        
+        # Ajouter message client
+        st.session_state.chat_history[chat_cid].append({"role": st.session_state.role, "sender": st.session_state.nom, "text": prompt, "ts": ts_now})
+        
+        # Réponse Bot
+        if st.session_state.role == "client":
+            bot_reply = "Bonjour ! Un technicien va vérifier ces données. Vérifiez les vannes la nuit."
+            if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
+            elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
             
-            if st.session_state.role == "client":
-                bot_reply = "Bonjour ! Un technicien va vérifier ces données. Vérifiez les vannes la nuit."
-                if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
-                elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn."
-                
-                conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
-                             (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
-                conn.commit()
-            st.rerun()
+            st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
+        
+        st.rerun()
