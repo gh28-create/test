@@ -35,13 +35,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# FONCTION POUR GÉNÉRER LE PDF
+# FONCTIONS POUR GÉNÉRER LES PDF
 # ==========================================
 def create_pdf(dataframe, client_name):
+    """PDF mte3 el tableau mte3 les alertes (Tab 1)"""
     pdf = FPDF()
     pdf.add_page()
     
-    # Header
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(0, 119, 182)
     pdf.cell(0, 10, "AquaSense Pro - Rapport d'Audit", ln=True, align="C")
@@ -51,7 +51,6 @@ def create_pdf(dataframe, client_name):
     pdf.cell(0, 10, f"Client : {client_name} | Date : {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
     pdf.ln(10)
     
-    # Table Header
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(0, 119, 182)
     pdf.set_text_color(255, 255, 255)
@@ -63,7 +62,6 @@ def create_pdf(dataframe, client_name):
         pdf.cell(col_widths[i], 10, header, border=1, fill=True, align="C")
     pdf.ln()
     
-    # Table Body
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(0, 0, 0)
     fill = False
@@ -89,6 +87,40 @@ def create_pdf(dataframe, client_name):
     pdf.set_font("Helvetica", "B", 12)
     total = dataframe[dataframe['Statut'] != 'Résolue']['Coût (DT/mois)'].sum()
     pdf.cell(0, 10, f"Total des pertes actives : {total:,.0f} DT / mois", ln=True, align="R")
+    
+    return bytes(pdf.output())
+
+def create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, personnes, client_name):
+    """PDF mte3 el simulation (Tab 2)"""
+    pdf = FPDF()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_text_color(0, 119, 182)
+    pdf.cell(0, 10, "AquaSense Pro - Rapport de Simulation ROI", ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "I", 12)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 10, f"Client : {client_name} | Date : {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(10)
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 10, f"Scenario de reparation : {pct_fix}% des fuites", ln=True)
+    pdf.ln(5)
+    
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 10, f"- Eau sauvee par mois : {eau_sauvee:,.0f} Litres", ln=True)
+    pdf.cell(0, 10, f"- Argent sauve par mois : {argent_sauve:,.0f} DT", ln=True)
+    pdf.cell(0, 10, f"- Economies sur 1 an : {argent_sauve*12:,.0f} DT", ln=True)
+    pdf.ln(5)
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "Impact Environnemental :", ln=True)
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 10, f"- {bouteilles:,.0f} bouteilles d'eau de 1.5L", ln=True)
+    pdf.cell(0, 10, f"- {piscines:.1f} piscines olympiques", ln=True)
+    pdf.cell(0, 10, f"- Consommation annuelle de {personnes:.0f} personnes", ln=True)
     
     return bytes(pdf.output())
 
@@ -245,11 +277,10 @@ st.markdown("""
 
 st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow_html=True)
 
-# 3 ONGLETS
 tab_dash, tab_roi, tab_chat = st.tabs(["📊 Tableau de Bord", "💰 Impact & ROI", "💬 Support & Chat"])
 
 # ------------------------------------------
-# TAB 1 : DASHBOARD (M3a PDF & MAINTENANCE)
+# TAB 1 : DASHBOARD (M3a PDF mte3 les alertes)
 # ------------------------------------------
 with tab_dash:
     where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
@@ -265,13 +296,14 @@ with tab_dash:
     st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown("### 🚨 Alertes & Actions")
-    # Zidna el colonne mte3 el maintenance fi el query
     al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)', a.statut AS Statut, a.maintenance_note AS 'Note Maintenance' FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
         al['Date'] = pd.to_datetime(al['Date'])
+        al['Note Maintenance'] = al['Note Maintenance'].fillna('') 
+        al['Statut'] = al['Statut'].fillna('Nouvelle')
+        al = al.reset_index(drop=True)
         
-        # BOUTON PDF
         col_pdf, col_csv = st.columns([1, 4])
         with col_pdf:
             pdf_bytes = create_pdf(al, st.session_state.nom)
@@ -292,9 +324,9 @@ with tab_dash:
                 "Débit m³/h": st.column_config.NumberColumn("Débit", format="%.2f"),
                 "Coût (DT/mois)": st.column_config.NumberColumn("Coût", format="%.0f DT"),
                 "Statut": st.column_config.SelectboxColumn("État", options=["Nouvelle", "En cours", "Résolue"], required=True),
-                "Note Maintenance": st.column_config.TextColumn("Note Maintenance", disabled=True) # Ma nbadalouhech men hna
+                "Note Maintenance": st.column_config.TextColumn("Note Maintenance", disabled=True) 
             },
-            hide_index=True, width='stretch', key="alerts_editor"
+            hide_index=True, width='stretch'
         )
         
         changed = False
@@ -310,14 +342,12 @@ with tab_dash:
             conn.commit()
             st.rerun()
 
-        # --- TICKET DE MAINTENANCE (SECTION JDIDA) ---
         st.markdown("---")
         st.markdown("### 🛠️ Assigner un Ticket de Maintenance")
         st.info("Sélectionnez une fuite active pour assigner un technicien et ajouter une note.")
         
         al_actives = al[al['Statut'] != 'Résolue']
         if not al_actives.empty:
-            # N7adhrrou les options (Zone + Date)
             al_actives['Option'] = al_actives['Zone'] + " (Détecté le " + al_actives['Date'].dt.strftime('%d/%m/%Y') + ")"
             
             with st.form("maintenance_form"):
@@ -327,7 +357,6 @@ with tab_dash:
                 
                 if st.form_submit_button("Créer le Ticket & Passer en 'En cours'", type="primary"):
                     if technicien and note:
-                        # Nl9aw el ID mte3 el fuite elli ekhtarha
                         fuite_id = al_actives[al_actives['Option'] == selected_fuite]['id'].values[0]
                         full_note = f"[{technicien}] : {note}"
                         conn.execute("UPDATE alertes SET statut = 'En cours', maintenance_note = ? WHERE id = ?", (full_note, fuite_id))
@@ -344,7 +373,7 @@ with tab_dash:
         st.success("✅ Aucune fuite active. Votre installation est optimale.")
 
 # ------------------------------------------
-# TAB 2 : IMPACT & ROI (Kima 9bal)
+# TAB 2 : IMPACT & ROI (M3a PDF mte3 el simulation)
 # ------------------------------------------
 with tab_roi:
     st.markdown("### 📈 Simulateur d'Impact Environnemental & Financier")
@@ -369,17 +398,18 @@ with tab_roi:
             st.metric("💰 Argent Sauvé / mois", f"{argent_sauve:,.0f} DT")
 
             st.markdown("<br>", unsafe_allow_html=True)
-            rapport_data = pd.DataFrame({
-                "Indicateur": ["Pourcentage de fuites réparées", "Eau sauvée par mois (Litres)", "Argent sauvé par mois (DT)", "Economies sur 1 an (DT)"],
-                "Valeur": [f"{pct_fix}%", f"{eau_sauvee:,.0f} L", f"{argent_sauve:,.0f} DT", f"{argent_sauve*12:,.0f} DT"]
-            })
-            csv_roi = rapport_data.to_csv(index=False).encode('utf-8')
             
+            bouteilles = eau_sauvee / 1.5 
+            piscines = eau_sauvee / 2500000 
+            personnes = eau_sauvee/365/150
+            
+            # BOUTON PDF JDID (Badalna el CSV b' PDF)
+            pdf_roi_bytes = create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, personnes, st.session_state.nom)
             st.download_button(
-                label="📥 Télécharger ce rapport de simulation (CSV)",
-                data=csv_roi,
-                file_name='rapport_roi_aquasense.csv',
-                mime='text/csv',
+                label="📄 Télécharger ce rapport de simulation (PDF)",
+                data=pdf_roi_bytes,
+                file_name='rapport_roi_aquasense.pdf',
+                mime='application/pdf',
                 type="primary",
                 width='stretch'
             )
@@ -388,12 +418,9 @@ with tab_roi:
             st.markdown("#### 🌍 Impact Environnemental")
             st.markdown(f"En réparant **{pct_fix}%** des fuites, votre entreprise économise :")
             
-            bouteilles = eau_sauvee / 1.5 
-            piscines = eau_sauvee / 2500000 
-            
             st.success(f"💧 **{bouteilles:,.0f}** bouteilles d'eau de 1.5L")
             st.success(f"🏊 **{piscines:.1f}** piscines olympiques d'eau")
-            st.success(f"🌳 L'équivalent de la consommation annuelle de **{eau_sauvee/365/150:.0f}** personnes")
+            st.success(f"🌳 L'équivalent de la consommation annuelle de **{personnes:.0f}** personnes")
             
             st.caption("Ces chiffres peuvent être intégrés dans votre rapport RSE.")
     else:
