@@ -3,7 +3,8 @@ import pandas as pd, numpy as np, sqlite3, random, os
 from sklearn.ensemble import IsolationForest
 from datetime import datetime, timedelta
 import plotly.express as px
-from groq import Groq
+from groq import Groq  # <-- IMPORT AJOUTÉ ICI
+
 # ==========================================
 # CONFIGURATION & STYLE
 # ==========================================
@@ -27,15 +28,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# INITIALISATION DB & IA (Dashboard Only)
+# INITIALISATION DB & IA (IN-MEMORY)
 # ==========================================
-DB_FILE = "aquasense.db"
-
-def get_db():
-    return sqlite3.connect(DB_FILE, check_same_thread=False)
-
-if not os.path.exists(DB_FILE):
-    conn = get_db()
+@st.cache_resource(show_spinner="Initialisation de la base de données...")
+def init_db():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY, nom TEXT, secteur TEXT, ville TEXT, tarif REAL);
     CREATE TABLE IF NOT EXISTS compteurs(id INTEGER PRIMARY KEY, client_id INT, zone TEXT);
@@ -94,19 +91,17 @@ if not os.path.exists(DB_FILE):
             alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     conn.commit()
-    conn.close()
+    return conn
 
-conn = get_db()
+conn = init_db()
 
 # ==========================================
-# INITIALISATION CHAT (Mémoire)
+# INITIALISATION CHAT
 # ==========================================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = {
         1: [{"role": "client", "sender": "Hôtel Les Palmiers", "text": "Bonjour, j'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?", "ts": "12:43"}],
-        2: [],
-        3: [],
-        4: []
+        2: [], 3: [], 4: []
     }
 
 # ==========================================
@@ -194,7 +189,7 @@ with tab_dash:
             st.plotly_chart(fig2, width='stretch')
 
 # ------------------------------------------
-# TAB 2 : CHAT & SUPPORT (Version ZAKI)
+# TAB 2 : CHAT & SUPPORT (VERSION GROQ AI)
 # ------------------------------------------
 with tab_chat:
     st.markdown("### 💬 Messagerie avec le Support AquaSense")
@@ -240,12 +235,12 @@ with tab_chat:
             st.session_state.chat_history[chat_cid].append({"role": "assistant", "sender": "Bot AquaSense (IA)", "text": bot_reply, "ts": ts_now})
             st.rerun()
 
-        if prompt := st.chat_input("Tapez votre message ici..."):
+    # --------- L'INTELLIGENCE ARTIFICIELLE GROQ ---------
+    if prompt := st.chat_input("Tapez votre message ici..."):
         ts_now = datetime.now().strftime('%H:%M')
         st.session_state.chat_history[chat_cid].append({"role": st.session_state.role, "sender": st.session_state.nom, "text": prompt, "ts": ts_now})
         
         if st.session_state.role == "client":
-            # 1. Récupération des données du client pour les donner à l'IA
             query_top = pd.read_sql(f"SELECT c.zone, a.cout FROM alertes a JOIN compteurs c ON c.id=a.cid WHERE c.client_id={chat_cid} ORDER BY a.cout DESC LIMIT 3", conn)
             
             if not query_top.empty:
@@ -255,30 +250,24 @@ with tab_chat:
             else:
                 data_context = "Aucune fuite détectée pour ce client."
 
-            # 2. Appel à l'IA Groq
             try:
-                # Récupération sécurisée de la clé depuis les Secrets Streamlit
-                client_ai = Groq(api_key=st.secrets["GROQ_API_KEY"]) 
+                # M3a l'API mte3ek. (Ila 7attit-ha fi Streamlit Secrets, hédha elli bch yekhdem)
+                api_key = st.secrets.get("GROQ_API_KEY", "")
                 
-                system_prompt = f"""
-                Tu es le 'Bot AquaSense', l'assistant intelligent de la plateforme AquaSense Pro.
-                Tu parles à l'utilisateur : {st.session_state.nom}.
-                Voici les vraies données de consommation d'eau de ce client :
-                {data_context}
-                
-                Réponds à la question du client de manière professionnelle, courte et précise en te basant sur ces données.
-                Si le client pose une question hors sujet (météo, football, etc.), réponds poliment que tu es uniquement un assistant pour la gestion de l'eau.
-                """
-                
-                chat_completion = client_ai.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    model="llama-3.3-70b-versatile", # Modèle puissant et rapide
-                )
-                bot_reply = chat_completion.choices[0].message.content
-                
+                if api_key == "":
+                    bot_reply = "Erreur technique : Veuillez configurer votre clé API Groq dans les secrets Streamlit."
+                else:
+                    client_ai = Groq(api_key=api_key)
+                    system_prompt = f"Tu es le 'Bot AquaSense'. Tu parles à : {st.session_state.nom}. Voici ses données :\n{data_context}\nRéponds de manière pro, courte et précise. Si hors sujet (météo, foot), dis poliment que tu es un assistant pour l'eau."
+                    
+                    chat_completion = client_ai.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}
+                        ],
+                        model="llama-3.3-70b-versatile",
+                    )
+                    bot_reply = chat_completion.choices[0].message.content
             except Exception as e:
                 bot_reply = "Désolé, je rencontre une petite erreur technique. Un agent humain va prendre le relais."
             
