@@ -11,43 +11,23 @@ st.set_page_config(page_title="AquaSense Pro | Détection de Fuites", page_icon=
 
 st.markdown("""
 <style>
-    /* Style général */
-    .reportview-container { background: #f4f7f6; }
-    /* Style des cartes KPI */
     div[data-testid="metric-container"] {
-        background-color: white;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border-left: 5px solid #0077b6;
+        background-color: white; border-radius: 10px; padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 5px solid #0077b6;
     }
-    div[data-testid="metric-container"] > label {
-        color: #555;
-        font-weight: 600;
-    }
-    div[data-testid="metric-container"] > div {
-        color: #0077b6;
-        font-size: 1.8rem;
-        font-weight: bold;
-    }
-    /* Style des titres */
+    div[data-testid="metric-container"] > label { color: #555; font-weight: 600; }
+    div[data-testid="metric-container"] > div { color: #0077b6; font-size: 1.8rem; font-weight: bold; }
     h1 { color: #023e8a; }
     h2, h3 { color: #0077b6; }
-    /* Bandeau d'alerte */
     .custom-warning {
-        background-color: #fff3cd;
-        color: #856404;
-        padding: 15px;
-        border-radius: 5px;
-        border-left: 5px solid #ffeeba;
-        margin-bottom: 20px;
-        font-weight: bold;
+        background-color: #fff3cd; color: #856404; padding: 15px;
+        border-radius: 5px; border-left: 5px solid #ffeeba; margin-bottom: 20px; font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# INITIALISATION DB & IA
+# INITIALISATION DB & IA & CHAT
 # ==========================================
 @st.cache_resource
 def init_db():
@@ -57,30 +37,21 @@ def init_db():
     CREATE TABLE compteurs(id INTEGER PRIMARY KEY, client_id INT, zone TEXT);
     CREATE TABLE releves(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, vol REAL);
     CREATE TABLE users(id INTEGER PRIMARY KEY, email TEXT, pwd TEXT, role TEXT, client_id INT, nom TEXT);
-    CREATE TABLE alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME,
-                         score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'nouvelle');
+    CREATE TABLE alertes(id INTEGER PRIMARY KEY AUTOINCREMENT, cid INT, ts DATETIME, score REAL, fuite REAL, cout REAL, statut TEXT DEFAULT 'nouvelle');
+    CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INT, sender TEXT, role TEXT, text TEXT, ts DATETIME);
     """)
     
-    # Données clients
     conn.executemany("INSERT INTO clients VALUES(?,?,?,?,?)", [
-        (1,'Hôtel Les Palmiers','Hôtellerie','Hammamet',2.8),
-        (2,'TextileMed SARL','Textile','Monastir',2.5),
-        (3,'AgroPlus','Agroalimentaire','Sfax',2.4),
-        (4,'Résidence Marina','Hôtellerie','Sousse',2.8)])
-    
-    # Compteurs
+        (1,'Hôtel Les Palmiers','Hôtellerie','Hammamet',2.8), (2,'TextileMed SARL','Textile','Monastir',2.5),
+        (3,'AgroPlus','Agroalimentaire','Sfax',2.4), (4,'Résidence Marina','Hôtellerie','Sousse',2.8)])
     conn.executemany("INSERT INTO compteurs VALUES(?,?,?)", [
-        (1,1,'global'),(2,1,'blanchisserie'),(3,1,'piscine'),
-        (4,2,'global'),(5,2,'process'),(6,3,'global'),
-        (7,4,'global'),(8,4,'sanitaires')])
-    
-    # Utilisateurs (Auth)
+        (1,1,'global'),(2,1,'blanchisserie'),(3,1,'piscine'), (4,2,'global'),(5,2,'process'),(6,3,'global'), (7,4,'global'),(8,4,'sanitaires')])
     conn.executemany("INSERT INTO users VALUES(?,?,?,?,?,?)", [
         (1,'admin@aquasense.tn','admin123','admin',None,'Administrateur AquaSense'),
         (2,'hotel@aquasense.tn','hotel123','client',1,'Hôtel Les Palmiers'),
         (3,'textile@aquasense.tn','textile123','client',2,'TextileMed')])
     
-    # Génération des données simulées (90 jours)
+    # Génération données
     random.seed(42); np.random.seed(42)
     start = datetime.utcnow() - timedelta(days=90)
     rows = []
@@ -93,7 +64,6 @@ def init_db():
             for h in range(24):
                 ts = start + timedelta(days=d, hours=h)
                 v = max(0, profil(h) + random.uniform(-0.05, 0.05))
-                # Injection des fuites
                 if cid==2 and d>=60 and 2<=h<=5: v += 0.90
                 if cid==5 and d>=75 and 0<=h<=6: v += 0.60
                 if cid==8 and d>=50 and (h>=22 or h<=3): v += 0.45
@@ -101,43 +71,37 @@ def init_db():
     conn.executemany("INSERT INTO releves(cid,ts,vol) VALUES(?,?,?)", rows)
     conn.commit()
     
-    # --- Modèle IA (Isolation Forest) ---
-    df = pd.read_sql("""SELECT r.cid AS cid, r.ts AS ts, r.vol AS vol, cl.tarif AS tarif
-                        FROM releves r JOIN compteurs c ON c.id=r.cid
-                        JOIN clients cl ON cl.id=c.client_id""", conn)
-    df['ts'] = pd.to_datetime(df['ts'])
-    df['hour'] = df['ts'].dt.hour
-    df['is_night'] = df['hour'].between(2,5).astype(int)
-    
+    # IA Model
+    df = pd.read_sql("SELECT r.cid, r.ts, r.vol, cl.tarif FROM releves r JOIN compteurs c ON c.id=r.cid JOIN clients cl ON cl.id=c.client_id", conn)
+    df['ts'] = pd.to_datetime(df['ts']); df['hour'] = df['ts'].dt.hour; df['is_night'] = df['hour'].between(2,5).astype(int)
     df = df.sort_values(['cid', 'ts']).reset_index(drop=True)
     df['roll7'] = df.groupby('cid')['vol'].rolling(168, min_periods=24).mean().reset_index(0, drop=True)
     df['hmean'] = df.groupby(['cid', 'hour'])['vol'].transform('mean')
-    df['ratio'] = df['vol'] / (df['hmean'] + 0.01)
-    df = df.dropna(subset=['roll7'])
+    df['ratio'] = df['vol'] / (df['hmean'] + 0.01); df = df.dropna(subset=['roll7'])
     
-    F = ['vol','hour','roll7','ratio','is_night']
     alerts = []
     for cid, g in df.groupby('cid'):
-        X = g[F].fillna(0).values
+        X = g[['vol','hour','roll7','ratio','is_night']].fillna(0).values
         if len(X) < 50: continue
         m = IsolationForest(contamination=0.02, random_state=42).fit(X)
         g = g.copy(); g['score'] = -m.score_samples(X)
-        seuil = np.percentile(g['score'], 98)
-        sus = g[(g['score']>seuil) & (g['vol']>0.2)].copy()
+        sus = g[(g['score']>np.percentile(g['score'], 98)) & (g['vol']>0.2)].copy()
         if sus.empty: continue
-        sus['date'] = sus['ts'].dt.date
-        sus = sus.sort_values('score', ascending=False).drop_duplicates(['cid','date'])
+        sus['date'] = sus['ts'].dt.date; sus = sus.sort_values('score', ascending=False).drop_duplicates(['cid','date'])
         for _, r in sus.iterrows():
             f = max(0, r['vol'] - r['hmean'])
             alerts.append((int(cid), r['ts'].strftime('%Y-%m-%d %H:%M:%S'), float(r['score']), float(f), float(f*24*30*r['tarif'])))
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
+    
+    # Messages initiaux
+    conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (1, 'Hôtel Les Palmiers', 'client', 'Bonjour, j\\'ai vu la fuite de la blanchisserie. Comment faire pour la réparer ?', ?)", (datetime.utcnow().strftime('%Y-%m-%d %H:%M'),))
     conn.commit()
     return conn
 
 conn = init_db()
 
 # ==========================================
-# LOGIN PAGE
+# LOGIN
 # ==========================================
 for k in ("email","role","nom","cid"):
     st.session_state.setdefault(k, None)
@@ -153,113 +117,116 @@ if not st.session_state.email:
             p = st.text_input("🔒 Mot de passe", "admin123", type="password")
             if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
                 row = pd.read_sql(f"SELECT * FROM users WHERE email='{e}' AND pwd='{p}'", conn)
-                if row.empty:
-                    st.error("❌ Identifiants invalides.")
-                else:
-                    st.session_state.update(
-                        email=row.iloc[0]['email'], role=row.iloc[0]['role'],
-                        nom=row.iloc[0]['nom'], cid=row.iloc[0]['client_id'])
+                if not row.empty:
+                    st.session_state.update(email=row.iloc[0]['email'], role=row.iloc[0]['role'], nom=row.iloc[0]['nom'], cid=row.iloc[0]['client_id'])
                     st.rerun()
-        st.info("💡 **Comptes de démonstration :**\n\n**Admin :** admin@aquasense.tn / admin123\n\n**Client Hôtel :** hotel@aquasense.tn / hotel123\n\n**Client Usine :** textile@aquasense.tn / textile123")
+                else: st.error("❌ Identifiants invalides.")
+        st.info("💡 **Comptes :**\nAdmin: admin@aquasense.tn / admin123\nClient Hôtel: hotel@aquasense.tn / hotel123\nClient Usine: textile@aquasense.tn / textile123")
     st.stop()
 
 # ==========================================
-# DASHBOARD (Interface Principale)
+# SIDEBAR & DASHBOARD
 # ==========================================
 with st.sidebar:
-    st.title("AquaSense Pro")
+    st.title("💧 AquaSense Pro")
     st.markdown(f"**Utilisateur :** {st.session_state.nom}")
     st.markdown(f"**Rôle :** {st.session_state.role.capitalize()}")
     st.markdown("---")
-    st.markdown("### 📖 Guide d'utilisation")
-    st.info("""
-    1. Consultez vos **indicateurs clés** en haut.
-    2. L'IA analyse vos données et détecte les fuites.
-    3. Le tableau ci-dessous vous montre **où** et **combien** vous perdez.
-    4. Les alertes en **rouge** sont critiques et nécessitent une action rapide.
-    """)
     if st.button("🚪 Déconnexion", use_container_width=True):
         for k in ("email","role","nom","cid"): st.session_state[k]=None
         st.rerun()
 
-# Filtre SQL pour l'isolation des données
 where = "" if st.session_state.role=="admin" else f"WHERE c.client_id={st.session_state.cid}"
-
 st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow_html=True)
 
-# --- KPIs ---
-k = pd.read_sql(f"""SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f,
-                           COUNT(DISTINCT a.cid) nc
-                    FROM alertes a JOIN compteurs c ON c.id=a.cid {where}""", conn).iloc[0]
+# Création des Onglets (Tabs)
+tab_dash, tab_chat = st.tabs(["📊 Tableau de Bord", "💬 Support & Chat"])
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("🚨 Fuites Détectées", int(k['n']), help="Nombre total d'anomalies détectées par l'IA.")
-col2.metric("🔧 Zones à Risque", int(k['nc']), help="Nombre de compteurs (zones) concernés par les fuites.")
-col3.metric("💧 Débit Perdu (m³/h)", f"{k['f']:.2f}", help="Volume d'eau perdu chaque heure à cause des fuites.")
-col4.metric("💰 Économies Potentielles", f"{k['c']*12:,.0f} DT", help="Argent que vous pouvez économiser sur une année en réparant ces fuites.")
+# ------------------------------------------
+# TAB 1 : DASHBOARD
+# ------------------------------------------
+with tab_dash:
+    # --- KPIs ---
+    k = pd.read_sql(f"SELECT COUNT(*) n, COALESCE(SUM(a.cout),0) c, COALESCE(SUM(a.fuite),0) f, COUNT(DISTINCT a.cid) nc FROM alertes a JOIN compteurs c ON c.id=a.cid {where}", conn).iloc[0]
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("🚨 Fuites Détectées", int(k['n']))
+    col2.metric("🔧 Zones à Risque", int(k['nc']))
+    col3.metric("💧 Débit Perdu (m³/h)", f"{k['f']:.2f}")
+    col4.metric("💰 Économies Potentielles", f"{k['c']*12:,.0f} DT")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- ALERTES ---
-st.markdown("### 🚨 Alertes de Fuites (Analysées par l'IA)")
-al = pd.read_sql(f"""SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone,
-                            ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h',
-                            ROUND(a.cout,0) AS 'Coût (DT/mois)'
-                     FROM alertes a
-                     JOIN compteurs c ON c.id=a.cid
-                     JOIN clients cl ON cl.id=c.client_id
-                     {where} ORDER BY a.cout DESC""", conn)
-
-if al.empty:
-    st.success("✅ Excellente nouvelle ! Aucune fuite détectée pour le moment.")
-else:
-    def color_cost(val):
-        try:
-            v = float(val)
-            if v > 1000: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
-            elif v > 500: return 'background-color: #ffe6cc; color: #cc6600;'
-        except:
-            pass
-        return 'background-color: #ffffcc;'
+    # --- ALERTES ---
+    st.markdown("### 🚨 Alertes de Fuites (Analysées par l'IA)")
+    al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS 'Débit m³/h', ROUND(a.cout,0) AS 'Coût (DT/mois)' FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
-    # Utilisation de .map() pour les nouvelles versions de Pandas
-    styled_al = al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)'])
-    
-    st.dataframe(styled_al, use_container_width=True, hide_index=True)
-    
-    st.markdown(
-        f'<div class="custom-warning">⚠️ Action Requise : Réparer ces fuites vous permettrait d\'économiser environ {al["Coût (DT/mois)"].sum()*12:,.0f} DT par an.</div>', 
-        unsafe_allow_html=True
-    )
-
-# --- GRAPHIQUES ---
-st.markdown("### 📈 Analyse de la Consommation")
-co = pd.read_sql(f"""SELECT r.ts, r.vol, c.zone, cl.nom
-                     FROM releves r JOIN compteurs c ON c.id=r.cid
-                     JOIN clients cl ON cl.id=c.client_id {where}""", conn)
-co['ts'] = pd.to_datetime(co['ts'])
-co['hour'] = co['ts'].dt.hour
-
-col_g1, col_g2 = st.columns(2)
-
-with col_g1:
-    st.markdown("**Profil Horaire Moyen (Courbe Normale vs Fuites)**")
-    prof = co.groupby('hour')['vol'].mean().reset_index()
-    fig1 = px.line(prof, x='hour', y='vol', markers=True, 
-                   labels={'vol':'Débit Moyen (m³/h)','hour':'Heure de la journée'})
-    fig1.update_traces(line_color='#0077b6', line_width=3)
-    fig1.update_layout(plot_bgcolor='white', margin=dict(l=0,r=0,t=20,b=0))
-    st.plotly_chart(fig1, use_container_width=True)
-    st.caption("💡 Si la courbe reste élevée entre 2h et 5h du matin, cela confirme une fuite nocturne.")
-
-with col_g2:
-    st.markdown("**Répartition des Coûts par Zone**")
-    by_zone = al.groupby('Zone')['Coût (DT/mois)'].sum().reset_index()
-    if not by_zone.empty:
-        fig2 = px.pie(by_zone, names='Zone', values='Coût (DT/mois)', hole=0.5, 
-                      color_discrete_sequence=px.colors.sequential.Reds_r)
-        fig2.update_layout(margin=dict(l=0,r=0,t=20,b=0))
-        st.plotly_chart(fig2, use_container_width=True)
-        st.caption("💡 Identifiez les zones qui vous coûtent le plus cher en eau.")
+    if not al.empty:
+        def color_cost(val):
+            try:
+                v = float(val)
+                if v > 1000: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
+                elif v > 500: return 'background-color: #ffe6cc; color: #cc6600;'
+            except: pass
+            return 'background-color: #ffffcc;'
+        
+        st.dataframe(al.drop(columns=['id']).style.map(color_cost, subset=['Coût (DT/mois)']), use_container_width=True, hide_index=True)
+        st.markdown(f'<div class="custom-warning">⚠️ Action Requise : Réparer ces fuites vous permettrait d\'économiser environ {al["Coût (DT/mois)"].sum()*12:,.0f} DT par an.</div>', unsafe_allow_html=True)
     else:
-        st.info("Pas de données de coût à afficher.")
+        st.success("✅ Aucune fuite détectée.")
+
+    # --- GRAPHIQUES ---
+    co = pd.read_sql(f"SELECT r.ts, r.vol, c.zone FROM releves r JOIN compteurs c ON c.id=r.cid {where}", conn)
+    co['ts'] = pd.to_datetime(co['ts']); co['hour'] = co['ts'].dt.hour
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        prof = co.groupby('hour')['vol'].mean().reset_index()
+        fig1 = px.line(prof, x='hour', y='vol', markers=True, labels={'vol':'Débit Moyen (m³/h)','hour':'Heure'})
+        fig1.update_traces(line_color='#0077b6', line_width=3)
+        st.plotly_chart(fig1, use_container_width=True)
+    with col_g2:
+        if not al.empty:
+            by_zone = al.groupby('Zone')['Coût (DT/mois)'].sum().reset_index()
+            fig2 = px.pie(by_zone, names='Zone', values='Coût (DT/mois)', hole=0.5, color_discrete_sequence=px.colors.sequential.Reds_r)
+            st.plotly_chart(fig2, use_container_width=True)
+
+# ------------------------------------------
+# TAB 2 : CHAT & SUPPORT
+# ------------------------------------------
+with tab_chat:
+    st.markdown("### 💬 Messagerie avec le Support AquaSense")
+    
+    if st.session_state.role == "admin":
+        st.info("En tant qu'Admin, vous pouvez discuter avec chaque client individuellement.")
+        clients_list = pd.read_sql("SELECT id, nom FROM clients", conn)
+        selected_client_name = st.selectbox("Sélectionnez un client :", clients_list['nom'])
+        chat_cid = int(clients_list[clients_list['nom'] == selected_client_name]['id'].iloc[0])
+    else:
+        chat_cid = st.session_state.cid
+        st.info("Posez vos questions techniques ou demandez de l'aide.")
+
+    # Affichage des messages
+    msgs = pd.read_sql(f"SELECT sender, role, text, ts FROM messages WHERE client_id={chat_cid} ORDER BY ts", conn)
+    for _, m in msgs.iterrows():
+        with st.chat_message("user" if m['role'] == st.session_state.role else "assistant"):
+            st.write(f"**{m['sender']}** ({m['ts'][11:16]})")
+            st.write(m['text'])
+
+    # Zone d'envoi
+    if prompt := st.chat_input("Tapez votre message ici..."):
+        ts_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+        # Enregistrer le message
+        conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
+                     (chat_cid, st.session_state.nom, st.session_state.role, prompt, ts_now))
+        conn.commit()
+        
+        # Auto-réponse du Bot si c'est un client
+        if st.session_state.role == "client":
+            bot_reply = "Bonjour ! Un technicien va vérifier ces données. En attendant, voici quelques conseils : vérifiez les vannes la nuit."
+            if "fuite" in prompt.lower(): bot_reply = "Nous avons bien noté la fuite. L'équipe de maintenance peut intervenir sous 24h."
+            elif "prix" in prompt.lower() or "payer" in prompt.lower(): bot_reply = "Votre abonnement SaaS est de 500 DT/mois. Contactez admin@aquasense.tn pour la facturation."
+            elif "répar" in prompt.lower() or "régl" in prompt.lower(): bot_reply = "Une fois la réparation effectuée par vos plombiers, l'IA ajustera automatiquement les alertes."
+            
+            conn.execute("INSERT INTO messages (client_id, sender, role, text, ts) VALUES (?, ?, ?, ?, ?)", 
+                         (chat_cid, "Bot AquaSense (IA)", "assistant", bot_reply, ts_now))
+            conn.commit()
+        
+        st.rerun()
