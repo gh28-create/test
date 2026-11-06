@@ -99,10 +99,10 @@ def create_roi_pdf(pct_fix, eau_sauvee, argent_sauve, bouteilles, piscines, pers
     return bytes(pdf.output())
 
 # ==========================================
-# INITIALISATION DB & IA (IN-MEMORY)
+# INITIALISATION DB & IA (IN-MEMORY) - Baddalna el esm bch nna7iw el cache
 # ==========================================
 @st.cache_resource(show_spinner="Initialisation de la base de données...")
-def init_db():
+def init_db_v3():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY, nom TEXT, secteur TEXT, ville TEXT, tarif REAL);
@@ -170,7 +170,7 @@ def generate_alerts(conn):
     conn.executemany("INSERT INTO alertes(cid,ts,score,fuite,cout) VALUES(?,?,?,?,?)", alerts)
     conn.commit()
 
-conn = init_db()
+conn = init_db_v3()
 
 # ==========================================
 # INITIALISATION CHAT
@@ -254,7 +254,7 @@ st.markdown(f"<h1>Tableau de Bord — {st.session_state.nom}</h1>", unsafe_allow
 tab_dash, tab_roi, tab_chat = st.tabs(["📊 Tableau de Bord", "💰 Impact & ROI", "💬 Support & Chat"])
 
 # ------------------------------------------
-# TAB 1 : DASHBOARD (El FIX HNA)
+# TAB 1 : DASHBOARD (El FIX EL KBIR HNA)
 # ------------------------------------------
 with tab_dash:
     where_kpi = where + (" AND " if where else "WHERE ") + "a.statut != 'Résolue'"
@@ -271,7 +271,6 @@ with tab_dash:
 
     st.markdown("### 🚨 Alertes & Actions")
     
-    # Na7ina el espaces w symbols men esma2 el colonnes (Débit m³/h wella Coût (DT/mois))
     al = pd.read_sql(f"SELECT a.id, a.ts AS Date, cl.nom AS Client, c.zone AS Zone, ROUND(a.score,3) AS Score, ROUND(a.fuite,2) AS Debit, ROUND(a.cout,0) AS Cout, a.statut AS Statut, a.maintenance_note AS Note FROM alertes a JOIN compteurs c ON c.id=a.cid JOIN clients cl ON cl.id=c.client_id {where} ORDER BY a.cout DESC", conn)
     
     if not al.empty:
@@ -297,17 +296,18 @@ with tab_dash:
                 type="primary"
             )
 
+        # --- EL FIX HNA : Na7ina "id": None w 7attina disabled ---
         edited_al = st.data_editor(
             al,
             column_config={
-                "id": None, 
                 "Date": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, HH:mm"),
                 "Score": st.column_config.NumberColumn("Confiance IA", format="%.3f"),
                 "Debit": st.column_config.NumberColumn("Débit (m³/h)", format="%.2f"),
                 "Cout": st.column_config.NumberColumn("Coût (DT/mois)", format="%.0f DT"),
                 "Statut": st.column_config.SelectboxColumn("État", options=["Nouvelle", "En cours", "Résolue"], required=True),
-                "Note": st.column_config.TextColumn("Note Maintenance", disabled=True) 
+                "Note": st.column_config.TextColumn("Note Maintenance")
             },
+            disabled=["id", "Date", "Client", "Zone", "Score", "Debit", "Cout", "Note"], # Bch n7ermou el modification 3la hedhom
             hide_index=True, use_container_width=True, key="editor_alertes"
         )
         
